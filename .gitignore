@@ -23,8 +23,11 @@ lib-cov
 coverage
 *.lcov
 
-# Ignore teh ffmpeg folder
+# Ignore folders
 ffmpeg/
+recordings/
+VBCABLE_Driver_Pack43/
+
 # nyc test coverage
 .nyc_output
 
