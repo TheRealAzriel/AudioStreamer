@@ -285,14 +285,6 @@ class FFplayGUI:
         self.start_button.config(state=tk.NORMAL if self.process is None else tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL if self.process is not None else tk.DISABLED)
 
-        # Define metadata for the recording
-        self.metadata = {
-            "title": "Recorded Audio",
-            "date": time.strftime("%Y-%m-%d"),
-            "year": time.strftime("%Y"),
-            "comment": "Recorded using Audio Receiver"
-        }        
-    
     def start_recording(self):
         if self.record_thread is None or not self.record_thread.is_alive():
             self.record_thread = threading.Thread(target=self.run_recording)
@@ -302,24 +294,16 @@ class FFplayGUI:
             self.update_status("Recording", "orange")
 
     def run_recording(self):
-        # Get the current datetime
-        datetime_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Include metadata parameters in the FFmpeg command
-        metadata_params = []
-        for key, value in self.metadata.items():
-            metadata_params.extend(['-metadata', f'{key}={value}'])
-
-        # Add the datetime metadata
-        metadata_params.extend(['-metadata', f'date={datetime_now}'])
+        # Capture the current date and time
+        datetime_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         cmd = [
             str(ffmpeg_path),
-            '-y',
-            '-f', 'mpegts',
-            '-i', 'udp://0.0.0.0:5006',
-            '-metadata', f'date={datetime_now}',
-            str(self.recording_filename)
+            '-y',  # Overwrite output files without asking
+            '-f', 'mpegts',  # Input format
+            '-i', 'udp://0.0.0.0:5006',  # Input URL (UDP stream)
+            '-metadata', f'date={datetime_now}',  # Add current date and time as metadata
+            str(self.recording_filename)  # Output file
         ]
 
         logging.debug(f"Running command: {' '.join(cmd)}")
