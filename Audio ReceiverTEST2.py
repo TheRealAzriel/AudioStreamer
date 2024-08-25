@@ -116,27 +116,22 @@ class FFplayGUI:
                 self.bitrate_thread.start()
 
     def stop_monitoring(self):
-        logging.debug("Stopping bitrate monitoring")
-        with self.lock:
-            if self.is_monitoring:
-                self.is_monitoring = False
-            else:
-                return
-
+        if self.is_monitoring:
+            self.is_monitoring = False
             if self.bitrate_thread and self.bitrate_thread.is_alive():
                 self.bitrate_thread.join()
+                self.bitrate_thread = None
             self.update_bitrate_label("Bitrate: N/A")
-            self.terminate_ffprobe_process()
 
     def update_bitrate_loop(self):
-        stream_url = 'udp://localhost:5004'
-        while self.is_monitoring:
-            if self.root.winfo_exists():
-                bitrate = self.get_bitrate(stream_url)
-                self.root.after(0, self.update_bitrate_label_safe, bitrate)
-            else:
-                return
-            time.sleep(5)
+    stream_url = 'udp://localhost:5004'
+    while self.is_monitoring:
+        if self.root.winfo_exists():  # Check if the root window exists to avoid errors during shutdown.
+            bitrate = self.get_bitrate(stream_url)
+            self.root.after(0, self.update_bitrate_label_safe, bitrate)
+        else:
+            return  # Exit the loop if the root window is destroyed.
+        time.sleep(5)
 
     def update_bitrate_label_safe(self, bitrate):
         self.update_bitrate_label(f"Bitrate: {bitrate} bits/s")
@@ -352,20 +347,15 @@ class FFplayGUI:
             subprocess.run([str(ffplay_path), '-nodisp', '-autoexit', str(self.recording_filename)])
 
     def on_closing(self):
-        logging.debug("Application closing...")
-        self.shutting_down = True
+        self.stop_monitoring()  # Ensure monitoring is stopped first
         self.stop_stream()
         self.stop_recording()
-        self.stop_monitoring()
-
+        
+        # Wait for bitrate thread to finish
         if self.bitrate_thread and self.bitrate_thread.is_alive():
-            self.bitrate_thread.join()
+            self.bitrate_thread.join()  # Ensure the bitrate thread has fully terminated
 
-        if self.stream_thread and self.stream_thread.is_alive():
-            self.stream_thread.join()
-
-        self.root.destroy()
-        logging.debug("Application closed")
+        self.root.destroy()  # Destroy the root window
 
 if __name__ == "__main__":
     logging.debug("Starting main application thread")
