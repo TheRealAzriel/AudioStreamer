@@ -124,14 +124,14 @@ class FFplayGUI:
             self.update_bitrate_label("Bitrate: N/A")
 
     def update_bitrate_loop(self):
-    stream_url = 'udp://localhost:5004'
-    while self.is_monitoring:
-        if self.root.winfo_exists():  # Check if the root window exists to avoid errors during shutdown.
-            bitrate = self.get_bitrate(stream_url)
-            self.root.after(0, self.update_bitrate_label_safe, bitrate)
-        else:
-            return  # Exit the loop if the root window is destroyed.
-        time.sleep(5)
+        stream_url = 'udp://localhost:5004'
+        while self.is_monitoring:
+            if self.root.winfo_exists():  # Check if the root window exists to avoid errors during shutdown.
+                bitrate = self.get_bitrate(stream_url)
+                self.root.after(0, self.update_bitrate_label_safe, bitrate)
+            else:
+                return  # Exit the loop if the root window is destroyed.
+            time.sleep(5)
 
     def update_bitrate_label_safe(self, bitrate):
         self.update_bitrate_label(f"Bitrate: {bitrate} bits/s")
