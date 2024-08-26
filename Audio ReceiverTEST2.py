@@ -3,18 +3,17 @@ from tkinter import messagebox
 from pathlib import Path
 import subprocess
 import os
+import sys
 import time
 import threading
 import platform
 import signal
 import socket
-import logging
 from ctypes import POINTER, cast
 import comtypes
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-from datetime import datetime
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+from datetime import datetime
 
 # Get the directory of the current script
 script_dir = Path(__file__).parent.resolve()
@@ -24,19 +23,46 @@ ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
 ffplay_path = script_dir / 'ffmpeg' / 'bin' / 'ffplay.exe'
 ffprobe_path = script_dir / 'ffmpeg' / 'bin' / 'ffprobe.exe'
 
+# Function to get bitrate
+def get_bitrate(stream_url):
+    try:
+        result = subprocess.run(
+            [str(ffprobe_path), '-v', 'error', '-show_entries', 'format=bit_rate', '-of',
+             'default=noprint_wrappers=1:nokey=1', stream_url],
+            capture_output=True, text=True, check=True
+        )
+        bitrate = result.stdout.strip()
+        if bitrate:
+            return bitrate
+        else:
+            return "N/A"
+    except subprocess.CalledProcessError as e:
+        print(f"An error occurred: {e}")
+        return "N/A"
+
+# Function to terminate processes by name
+def terminate_process(process_name):
+    if platform.system() == "Windows":
+        commands = ['taskkill', '/F', '/IM', f'{process_name}.exe', '/T']
+    else:
+        commands = ['pkill', '-f', process_name]
+
+    try:
+        subprocess.run(commands, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"Error terminating {process_name} processes: {e}")
+
 class FFplayGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Audio Receiver Tester")
         self.root.geometry("400x475")
 
-        logging.debug("Initializing audio devices")
         devices = AudioUtilities.GetSpeakers()
         interface = devices.Activate(
             IAudioEndpointVolume._iid_, comtypes.CLSCTX_INPROC_SERVER, None)
         self.volume = cast(interface, POINTER(IAudioEndpointVolume))
 
-        logging.debug("Setting up GUI components")
         volume_frame = tk.Frame(root, bg="lightblue", bd=2, relief="solid")
         volume_frame.place(x=20, y=10, width=90, height=280)
 
@@ -98,33 +124,29 @@ class FFplayGUI:
         self.ip_label = tk.Label(root, text=f"Local IP: {self.local_ip}", bg="white")
         self.ip_label.place(x=125, y=450)
 
-        self.bitrate_thread = None
-        self.is_monitoring = False
-        self.ffprobe_process = None
-        self.lock = threading.Lock()
-        self.shutting_down = False
+        self.bitrate_thread = None  # Initialize bitrate_thread
+        self.is_monitoring = False  # Initialize monitoring flag
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        logging.debug("GUI setup completed")
 
     def start_monitoring(self):
-        logging.debug("Starting bitrate monitoring")
-        with self.lock:
-            if not self.is_monitoring:
-                self.is_monitoring = True
-                self.bitrate_thread = threading.Thread(target=self.update_bitrate_loop)
-                self.bitrate_thread.start()
+        if not self.is_monitoring:
+            self.is_monitoring = True
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.NORMAL)
+            self.bitrate_thread = threading.Thread(target=self.update_bitrate_loop)
+            self.bitrate_thread.start()
 
     def stop_monitoring(self):
         if self.is_monitoring:
             self.is_monitoring = False
             if self.bitrate_thread and self.bitrate_thread.is_alive():
                 self.bitrate_thread.join()
-                self.bitrate_thread = None
+                self.bitrate_thread = None #Added this line
             self.update_bitrate_label("Bitrate: N/A")
 
     def update_bitrate_loop(self):
-        stream_url = 'udp://localhost:5004'
+        stream_url = 'udp://localhost:5004' 
         while self.is_monitoring:
             if self.root.winfo_exists():  # Check if the root window exists to avoid errors during shutdown.
                 bitrate = self.get_bitrate(stream_url)
@@ -139,38 +161,22 @@ class FFplayGUI:
     def update_bitrate_label(self, text):
         self.bitrate_label.config(text=text)
 
-    def terminate_ffprobe_process(self):
-        with self.lock:
-            if self.ffprobe_process and self.ffprobe_process.poll() is None:
-                logging.debug("Terminating ffprobe process")
-                self.ffprobe_process.terminate()
-                self.ffprobe_process.wait()
-            self.ffprobe_process = None
-
-    def get_bitrate(self, stream_url):
-        with self.lock:
-            self.terminate_ffprobe_process()  # Ensure any previous ffprobe process is terminated
-            try:
-                self.ffprobe_process = subprocess.Popen(
-                    [str(ffprobe_path), '-v', 'error', '-show_entries', 'format=bit_rate', '-of',
-                     'default=noprint_wrappers=1:nokey=1', stream_url],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
-                stdout, stderr = self.ffprobe_process.communicate(timeout=10)
-                bitrate = stdout.strip().decode()
-                if bitrate:
-                    return bitrate
-                else:
-                    return "N/A"
-            except subprocess.TimeoutExpired:
-                logging.error("ffprobe process timed out.")
-                self.terminate_ffprobe_process()
+    @staticmethod
+    def get_bitrate(stream_url):
+        try:
+            result = subprocess.run(
+                [str(ffprobe_path), '-v', 'error', '-show_entries', 'format=bit_rate', '-of',
+                 'default=noprint_wrappers=1:nokey=1', stream_url],
+                capture_output=True, text=True, check=True
+            )
+            bitrate = result.stdout.strip()
+            if bitrate:
+                return bitrate
+            else:
                 return "N/A"
-            except subprocess.CalledProcessError as e:
-                logging.error(f"An error occurred while fetching bitrate: {e}")
-                return "N/A"
-            finally:
-                self.ffprobe_process = None
+        except subprocess.CalledProcessError as e:
+            print(f"An error occurred: {e}")
+            return "N/A"
 
     def get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -190,7 +196,6 @@ class FFplayGUI:
 
     def start_stream(self):
         if self.process is None:
-            logging.debug("Starting stream thread")
             self.stream_thread = threading.Thread(target=self.run_ffplay)
             self.stream_thread.start()
             self.start_button.config(state=tk.DISABLED)
@@ -199,7 +204,6 @@ class FFplayGUI:
             self.start_monitoring()
 
     def run_ffplay(self):
-        logging.debug("Running ffplay subprocess")
         self.process = subprocess.Popen(
             [str(ffplay_path), '-nodisp', '-flags', 'low_delay', '-fflags', 'nobuffer', '-f', 'mpegts', 'udp://0.0.0.0:5005'],
             stdin=subprocess.PIPE,
@@ -207,20 +211,17 @@ class FFplayGUI:
             stderr=subprocess.PIPE,
             preexec_fn=os.setsid if platform.system() != "Windows" else None
         )
-        logging.debug("ffplay subprocess started")
         self.process.communicate()
-        logging.debug("ffplay subprocess terminated")
         self.process = None
         self.update_button_states()
         self.update_status("Idle", "blue")
 
     def stop_stream(self):
-        logging.debug("Stopping stream")
+        # Stop recording if it is active
         if self.record_process:
             self.stop_recording()
         
         if self.process:
-            logging.debug("Terminating stream process")
             def terminate_process_thread():
                 try:
                     if platform.system() == "Windows":
@@ -228,7 +229,7 @@ class FFplayGUI:
                     else:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                 except Exception as e:
-                    logging.error(f"Error terminating stream process: {e}")
+                    print(f"Error terminating stream process: {e}")
                 finally:
                     self.process = None
                     self.update_stop_stream_ui()
@@ -238,7 +239,6 @@ class FFplayGUI:
             self.update_stop_stream_ui()
 
     def update_stop_stream_ui(self):
-        logging.debug("Updating stop stream UI")
         self.update_button_states()
         self.update_status("Idle", "blue")
         self.stop_monitoring()
@@ -251,12 +251,12 @@ class FFplayGUI:
                 else:
                     os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             except Exception as e:
-                logging.error(f"Error terminating process: {e}")
-    
+                print(f"Error terminating process: {e}")
+
     def set_volume(self, value):
         volume_level = int(value) / 100.0
         self.volume.SetMasterVolumeLevelScalar(volume_level, None)
-    
+
     def on_mouse_wheel(self, event):
         if event.num == 4 or event.delta > 0:
             self.volume_slider.set(self.volume_slider.get() + 1)
@@ -294,9 +294,7 @@ class FFplayGUI:
             self.update_status("Recording", "orange")
 
     def run_recording(self):
-        # Capture the current date and time
-        datetime_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+        datetime_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cmd = [
             str(ffmpeg_path),
             '-y',  # Overwrite output files without asking
@@ -306,7 +304,7 @@ class FFplayGUI:
             str(self.recording_filename)  # Output file
         ]
 
-        logging.debug(f"Running command: {' '.join(cmd)}")
+        print(f"Running command: {' '.join(cmd)}")
 
         self.record_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.record_process.wait()
@@ -321,24 +319,28 @@ class FFplayGUI:
     def stop_recording(self):
         if self.record_process:
             try:
-                logging.debug("Sending 'q' to ffmpeg process to stop recording gracefully.")
+                # Send 'q' to the ffmpeg process's stdin to instruct it to finish processing
+                print("Sending 'q' to ffmpeg process to stop recording gracefully.")
                 self.record_process.stdin.write(b'q')
                 self.record_process.stdin.flush()
 
+                # Wait for the process to complete and ensure buffers are flushed
                 stdout, stderr = self.record_process.communicate(timeout=10)
-                logging.debug(f"Recording stdout: {stdout.decode('utf-8')}")
-                logging.debug(f"Recording stderr: {stderr.decode('utf-8')}")
-                logging.debug("Recording process terminated gracefully.")
+                print(f"Recording stdout: {stdout.decode('utf-8')}")
+                print(f"Recording stderr: {stderr.decode('utf-8')}")
+                print("Recording process terminated gracefully.")
             except subprocess.TimeoutExpired:
-                logging.error("Timed out. Forcibly terminating the recording process.")
+                print("Timed out. Forcibly terminating the recording process.")
                 self.terminate_process(self.record_process)
             except Exception as e:
-                logging.error(f"Error terminating recording process: {e}")
+                print(f"Error terminating recording process: {e}")
             finally:
                 self.record_process = None
+
                 self.record_button.config(state=tk.NORMAL)
                 self.stop_record_button.config(state=tk.DISABLED)
         
+        # Check if streaming process is alive and set the status accordingly
         if self.process and self.process.poll() is None:
             self.update_status("Receiving Stream", "green")
         else:
@@ -349,20 +351,15 @@ class FFplayGUI:
             subprocess.run([str(ffplay_path), '-nodisp', '-autoexit', str(self.recording_filename)])
 
     def on_closing(self):
-        self.stop_monitoring()  # Ensure monitoring is stopped first
         self.stop_stream()
         self.stop_recording()
-        
+        self.stop_monitoring()
         # Wait for bitrate thread to finish
         if self.bitrate_thread and self.bitrate_thread.is_alive():
             self.bitrate_thread.join()  # Ensure the bitrate thread has fully terminated
-
-        self.root.destroy()  # Destroy the root window
+        self.root.destroy()
 
 if __name__ == "__main__":
-    logging.debug("Starting main application thread")
     root = tk.Tk()
     app = FFplayGUI(root)
-    logging.debug("Entering mainloop")
     root.mainloop()
-    logging.debug("Exited mainloop")
