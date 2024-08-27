@@ -1,10 +1,9 @@
 import tkinter as tk
-from tkinter import messagebox
 from pathlib import Path
 import subprocess
 import os
-import sys
 import time
+import logging
 import threading
 import platform
 import signal
@@ -12,8 +11,9 @@ import socket
 from ctypes import POINTER, cast
 import comtypes
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-
 from datetime import datetime
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Get the directory of the current script
 script_dir = Path(__file__).parent.resolve()
@@ -108,6 +108,7 @@ class FFplayGUI:
 
         self.play_button = tk.Button(root, text="Play Recording", command=self.play_recording, state=tk.DISABLED, width=15, height=2, relief="solid", bd=2)
         self.play_button.place(x=130, y=405)
+        #self.update_play_button_state()  # Initial update based on the presence of the recording file
 
         self.process = None
         self.record_process = None
@@ -153,7 +154,7 @@ class FFplayGUI:
                 self.root.after(0, self.update_bitrate_label_safe, bitrate)
             else:
                 return  # Exit the loop if the root window is destroyed.
-            time.sleep(5)
+            time.sleep(1)
 
     def update_bitrate_label_safe(self, bitrate):
         self.update_bitrate_label(f"Bitrate: {bitrate} bits/s")
@@ -279,11 +280,13 @@ class FFplayGUI:
                 self.update_status("Idle", "blue")
 
     def update_status(self, text, color):
-        self.status_label.config(text=f"Status: {text}", fg=color)
+        if self.root.winfo_exists():
+            self.status_label.config(text=f"Status: {text}", fg=color)
 
     def update_button_states(self):
-        self.start_button.config(state=tk.NORMAL if self.process is None else tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL if self.process is not None else tk.DISABLED)
+        if self.root.winfo_exists():
+            self.start_button.config(state=tk.NORMAL if self.process is None else tk.DISABLED)
+            self.stop_button.config(state=tk.NORMAL if self.process is not None else tk.DISABLED)
 
     def start_recording(self):
         if self.record_thread is None or not self.record_thread.is_alive():
@@ -346,9 +349,16 @@ class FFplayGUI:
         else:
             self.update_status("Idle", "blue")
 
+    #def update_play_button_state(self):
+        #if os.path.exists(self.recording_filename):
+            #self.play_button.config(state=tk.NORMAL)
+        #else:
+            #self.play_button.config(state=tk.DISABLED)
+
     def play_recording(self):
         if os.path.exists(self.recording_filename):
             subprocess.run([str(ffplay_path), '-nodisp', '-autoexit', str(self.recording_filename)])
+            self.play_recording(state=tk.DISABLED)
 
     def on_closing(self):
         self.stop_stream()
