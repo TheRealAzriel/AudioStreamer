@@ -63,6 +63,23 @@ class FFplayGUI:
             IAudioEndpointVolume._iid_, comtypes.CLSCTX_INPROC_SERVER, None)
         self.volume = cast(interface, POINTER(IAudioEndpointVolume))
 
+        self.process = None
+        self.record_process = None
+        self.stream_thread = None
+        self.record_thread = None
+        self.play_process = None
+        self.is_muted = False
+
+        self.recordings_dir = script_dir / 'recordings'
+        self.recordings_dir.mkdir(exist_ok=True)
+
+        self.recording_filename = self.recordings_dir / "recorded_audio.mp3"
+
+        self.local_ip = self.get_local_ip()
+        
+        self.bitrate_thread = None  # Initialize bitrate_thread
+        self.is_monitoring = False  # Initialize monitoring flag
+
         volume_frame = tk.Frame(root, bg="lightblue", bd=2, relief="solid")
         volume_frame.place(x=20, y=10, width=90, height=280)
 
@@ -108,25 +125,10 @@ class FFplayGUI:
 
         self.play_button = tk.Button(root, text="Play Recording", command=self.play_recording, state=tk.DISABLED, width=15, height=2, relief="solid", bd=2)
         self.play_button.place(x=130, y=405)
-        #self.update_play_button_state()  # Initial update based on the presence of the recording file
+        self.update_play_button_state()  # Initial update based on the presence of the recording file
 
-        self.process = None
-        self.record_process = None
-        self.stream_thread = None
-        self.record_thread = None
-        self.is_muted = False
-
-        self.recordings_dir = script_dir / 'recordings'
-        self.recordings_dir.mkdir(exist_ok=True)
-
-        self.recording_filename = self.recordings_dir / "recorded_audio.mp3"
-
-        self.local_ip = self.get_local_ip()
         self.ip_label = tk.Label(root, text=f"Local IP: {self.local_ip}", bg="white")
         self.ip_label.place(x=125, y=450)
-
-        self.bitrate_thread = None  # Initialize bitrate_thread
-        self.is_monitoring = False  # Initialize monitoring flag
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -143,11 +145,11 @@ class FFplayGUI:
             self.is_monitoring = False
             if self.bitrate_thread and self.bitrate_thread.is_alive():
                 self.bitrate_thread.join()
-                self.bitrate_thread = None #Added this line
+                self.bitrate_thread = None  # Added this line
             self.update_bitrate_label("Bitrate: N/A")
 
     def update_bitrate_loop(self):
-        stream_url = 'udp://localhost:5004' 
+        stream_url = 'udp://localhost:5004'
         while self.is_monitoring:
             if self.root.winfo_exists():  # Check if the root window exists to avoid errors during shutdown.
                 bitrate = self.get_bitrate(stream_url)
@@ -307,12 +309,11 @@ class FFplayGUI:
             str(self.recording_filename)  # Output file
         ]
 
-        print(f"Running command: {' '.join(cmd)}")
-
         self.record_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.record_process.wait()
         self.record_process = None
         self.update_button_states()
+        self.update_play_button_state()  # Update play button state after recording
         
         if self.process:
             self.update_status("Receiving Stream", "green")
@@ -322,12 +323,9 @@ class FFplayGUI:
     def stop_recording(self):
         if self.record_process:
             try:
-                # Send 'q' to the ffmpeg process's stdin to instruct it to finish processing
                 print("Sending 'q' to ffmpeg process to stop recording gracefully.")
                 self.record_process.stdin.write(b'q')
                 self.record_process.stdin.flush()
-
-                # Wait for the process to complete and ensure buffers are flushed
                 stdout, stderr = self.record_process.communicate(timeout=10)
                 print(f"Recording stdout: {stdout.decode('utf-8')}")
                 print(f"Recording stderr: {stderr.decode('utf-8')}")
@@ -339,26 +337,51 @@ class FFplayGUI:
                 print(f"Error terminating recording process: {e}")
             finally:
                 self.record_process = None
-
                 self.record_button.config(state=tk.NORMAL)
                 self.stop_record_button.config(state=tk.DISABLED)
-        
+                self.update_play_button_state()  # Update play button state after stopping recording
+                self.update_status("Idle", "blue")
+
         # Check if streaming process is alive and set the status accordingly
         if self.process and self.process.poll() is None:
             self.update_status("Receiving Stream", "green")
         else:
             self.update_status("Idle", "blue")
 
-    #def update_play_button_state(self):
-        #if os.path.exists(self.recording_filename):
-            #self.play_button.config(state=tk.NORMAL)
-        #else:
-            #self.play_button.config(state=tk.DISABLED)
+    def update_play_button_state(self):
+        if os.path.exists(self.recording_filename):
+            self.play_button.config(state=tk.NORMAL)
+        else:
+            self.play_button.config(state=tk.DISABLED)
+
+    def check_playback_status(self):
+        # Check if the process is still running
+        if self.play_process and self.play_process.poll() is None:
+            self.play_button.after(1000, self.check_playback_status)
+        else:
+            # If the process has finished, reset the button text
+            self.play_button.config(text='Play Recording')
 
     def play_recording(self):
-        if os.path.exists(self.recording_filename):
-            subprocess.run([str(ffplay_path), '-nodisp', '-autoexit', str(self.recording_filename)])
-            self.play_recording(state=tk.DISABLED)
+        if self.play_button.config('text')[-1] == 'Play Recording':
+            # Change button text to 'Stop Playing'
+            self.play_button.config(text='Stop Playing')
+
+            # Start playing the recording
+            if os.path.exists(self.recording_filename):
+                self.play_process = subprocess.Popen([str(ffplay_path), '-nodisp', '-autoexit', str(self.recording_filename)],
+                                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.play_button.after(1000, self.check_playback_status)
+
+        else:
+            # Change button text to 'Play Recording'
+            self.play_button.config(text='Play Recording')
+
+            # Stop playing the recording
+            if self.play_process:
+                self.play_process.terminate()
+                self.play_process.wait()
+                self.play_process = None
 
     def on_closing(self):
         self.stop_stream()
