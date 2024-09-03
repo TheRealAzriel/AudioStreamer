@@ -15,7 +15,7 @@ from datetime import datetime
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Get the directory of the current script
+# Get the directory of the current script.
 script_dir = Path(__file__).parent.resolve()
 
 # Construct full paths to 'ffmpeg.exe' and 'ffplay.exe' using pathlib
