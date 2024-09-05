@@ -23,23 +23,6 @@ ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
 ffplay_path = script_dir / 'ffmpeg' / 'bin' / 'ffplay.exe'
 ffprobe_path = script_dir / 'ffmpeg' / 'bin' / 'ffprobe.exe'
 
-# Function to get bitrate
-def get_bitrate(stream_url):
-    try:
-        result = subprocess.run(
-            [str(ffprobe_path), '-v', 'error', '-show_entries', 'format=bit_rate', '-of',
-             'default=noprint_wrappers=1:nokey=1', stream_url],
-            capture_output=True, text=True, check=True
-        )
-        bitrate = result.stdout.strip()
-        if bitrate:
-            return bitrate
-        else:
-            return "N/A"
-    except subprocess.CalledProcessError as e:
-        print(f"An error occurred: {e}")
-        return "N/A"
-
 # Function to terminate processes by name
 def terminate_process(process_name):
     if platform.system() == "Windows":
@@ -50,7 +33,7 @@ def terminate_process(process_name):
     try:
         subprocess.run(commands, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     except Exception as e:
-        print(f"Error terminating {process_name} processes: {e}")
+        logging.error(f"Error terminating {process_name} processes: {e}")
 
 class FFplayGUI:
     def __init__(self, root):
@@ -178,7 +161,7 @@ class FFplayGUI:
             else:
                 return "N/A"
         except subprocess.CalledProcessError as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             return "N/A"
 
     def get_local_ip(self):
@@ -232,7 +215,7 @@ class FFplayGUI:
                     else:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                 except Exception as e:
-                    print(f"Error terminating stream process: {e}")
+                    logging.error(f"Error terminating stream process: {e}")
                 finally:
                     self.process = None
                     self.update_stop_stream_ui()
@@ -254,7 +237,7 @@ class FFplayGUI:
                 else:
                     os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             except Exception as e:
-                print(f"Error terminating process: {e}")
+                logging.error(f"Error terminating process: {e}")
 
     def set_volume(self, value):
         volume_level = int(value) / 100.0
@@ -323,18 +306,18 @@ class FFplayGUI:
     def stop_recording(self):
         if self.record_process:
             try:
-                print("Sending 'q' to ffmpeg process to stop recording gracefully.")
+                logging.info("Sending 'q' to ffmpeg process to stop recording gracefully.")
                 self.record_process.stdin.write(b'q')
                 self.record_process.stdin.flush()
                 stdout, stderr = self.record_process.communicate(timeout=10)
-                print(f"Recording stdout: {stdout.decode('utf-8')}")
-                print(f"Recording stderr: {stderr.decode('utf-8')}")
-                print("Recording process terminated gracefully.")
+                logging.info(f"Recording stdout: {stdout.decode('utf-8')}")
+                logging.info(f"Recording stderr: {stderr.decode('utf-8')}")
+                logging.info("Recording process terminated gracefully.")
             except subprocess.TimeoutExpired:
-                print("Timed out. Forcibly terminating the recording process.")
+                logging.warning("Timed out. Forcibly terminating the recording process.")
                 self.terminate_process(self.record_process)
             except Exception as e:
-                print(f"Error terminating recording process: {e}")
+                logging.error(f"Error terminating recording process: {e}")
             finally:
                 self.record_process = None
                 self.record_button.config(state=tk.NORMAL)
