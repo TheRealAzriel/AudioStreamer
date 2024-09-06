@@ -13,12 +13,20 @@ import comtypes
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Get the directory of the current script.
 script_dir = Path(__file__).parent.resolve()
 
-# Construct full paths to 'ffmpeg.exe' and 'ffplay.exe' using pathlib
+# Define log file path
+log_file_path = script_dir / 'app.log'
+
+# Ensure the log file directory exists
+log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+# Set up logging to file
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[logging.FileHandler(log_file_path)])
+
+# Construct full paths to 'ffmpeg.exe', 'ffplay.exe' and 'ffprobe.exe' using pathlib
 ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
 ffplay_path = script_dir / 'ffmpeg' / 'bin' / 'ffplay.exe'
 ffprobe_path = script_dir / 'ffmpeg' / 'bin' / 'ffprobe.exe'
@@ -31,7 +39,7 @@ def terminate_process(process_name):
         commands = ['pkill', '-f', process_name]
 
     try:
-        subprocess.run(commands, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        subprocess.run(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as e:
         logging.error(f"Error terminating {process_name} processes: {e}")
 
@@ -129,6 +137,7 @@ class FFplayGUI:
             if self.bitrate_thread and self.bitrate_thread.is_alive():
                 self.bitrate_thread.join()
                 self.bitrate_thread = None  # Added this line
+            terminate_process("ffprobe.exe")
             self.update_bitrate_label("Bitrate: N/A")
 
     def update_bitrate_loop(self):
@@ -152,14 +161,17 @@ class FFplayGUI:
         try:
             result = subprocess.run(
                 [str(ffprobe_path), '-v', 'error', '-show_entries', 'format=bit_rate', '-of',
-                 'default=noprint_wrappers=1:nokey=1', stream_url],
-                capture_output=True, text=True, check=True
+                'default=noprint_wrappers=1:nokey=1', stream_url],
+                capture_output=True, text=True, #timeout=10  # Add a timeout of 10 seconds
             )
             bitrate = result.stdout.strip()
             if bitrate:
                 return bitrate
             else:
                 return "N/A"
+        except subprocess.TimeoutExpired:
+            logging.error("ffprobe process timed out.")
+            return "N/A"
         except subprocess.CalledProcessError as e:
             logging.error(f"An error occurred: {e}")
             return "N/A"
@@ -214,20 +226,23 @@ class FFplayGUI:
                         self.process.terminate()
                     else:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                
+                    terminate_process("ffprobe")  # Ensure ffprobe is terminated
                 except Exception as e:
                     logging.error(f"Error terminating stream process: {e}")
                 finally:
                     self.process = None
                     self.update_stop_stream_ui()
+                    self.stop_monitoring()
 
             threading.Thread(target=terminate_process_thread).start()
         else:
             self.update_stop_stream_ui()
+            self.stop_monitoring()
 
     def update_stop_stream_ui(self):
         self.update_button_states()
         self.update_status("Idle", "blue")
-        self.stop_monitoring()
 
     def terminate_process(self, process):
         if process:
