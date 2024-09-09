@@ -39,14 +39,17 @@ def terminate_process(process_name):
         commands = ['pkill', '-f', process_name]
 
     try:
-        subprocess.run(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
     except Exception as e:
         logging.error(f"Error terminating {process_name} processes: {e}")
+
+# Define CREATE_NO_WINDOW for Windows
+CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 
 class FFplayGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Audio Receiver Tester")
+        self.root.title("Audio Receiver")
         self.root.geometry("400x475")
 
         devices = AudioUtilities.GetSpeakers()
@@ -148,7 +151,7 @@ class FFplayGUI:
                 self.root.after(0, self.update_bitrate_label_safe, bitrate)
             else:
                 return  # Exit the loop if the root window is destroyed.
-            time.sleep(5)
+            time.sleep(1)
 
     def update_bitrate_label_safe(self, bitrate):
         self.update_bitrate_label(f"Bitrate: {bitrate} bits/s")
@@ -162,7 +165,7 @@ class FFplayGUI:
             result = subprocess.run(
                 [str(ffprobe_path), '-v', 'error', '-show_entries', 'format=bit_rate', '-of',
                 'default=noprint_wrappers=1:nokey=1', stream_url],
-                capture_output=True, text=True, #timeout=10  # Add a timeout of 10 seconds
+                capture_output=True, text=True, creationflags=CREATE_NO_WINDOW  # Use creationflags for Windows
             )
             bitrate = result.stdout.strip()
             if bitrate:
@@ -207,7 +210,7 @@ class FFplayGUI:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            preexec_fn=os.setsid if platform.system() != "Windows" else None
+            creationflags=CREATE_NO_WINDOW  # Use creationflags for Windows
         )
         self.process.communicate()
         self.process = None
@@ -307,7 +310,7 @@ class FFplayGUI:
             str(self.recording_filename)  # Output file
         ]
 
-        self.record_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.record_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
         self.record_process.wait()
         self.record_process = None
         self.update_button_states()
@@ -368,7 +371,8 @@ class FFplayGUI:
             # Start playing the recording
             if os.path.exists(self.recording_filename):
                 self.play_process = subprocess.Popen([str(ffplay_path), '-nodisp', '-autoexit', str(self.recording_filename)],
-                                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                     creationflags=CREATE_NO_WINDOW)
                 self.play_button.after(1000, self.check_playback_status)
 
         else:
