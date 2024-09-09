@@ -148,7 +148,7 @@ class FFplayGUI:
                 self.root.after(0, self.update_bitrate_label_safe, bitrate)
             else:
                 return  # Exit the loop if the root window is destroyed.
-            time.sleep(1)
+            time.sleep(5)
 
     def update_bitrate_label_safe(self, bitrate):
         self.update_bitrate_label(f"Bitrate: {bitrate} bits/s")
