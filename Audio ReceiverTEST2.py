@@ -76,6 +76,10 @@ class FFplayGUI:
         self.bitrate_thread = None  # Initialize bitrate_thread
         self.is_monitoring = False  # Initialize monitoring flag
 
+        # process termination flags
+        self.ffprobe_terminated = False
+        self.ffplay_terminated = False
+
         volume_frame = tk.Frame(root, bg="lightblue", bd=2, relief="solid")
         volume_frame.place(x=20, y=10, width=90, height=280)
 
@@ -141,11 +145,20 @@ class FFplayGUI:
             self.is_monitoring = False
             if self.bitrate_thread and self.bitrate_thread.is_alive():
                 logging.info("Joining bitrate thread")
-                self.bitrate_thread.join(timeout=3)  # Add a timeout to join
+                self.bitrate_thread.join(timeout=.01)  # Add a timeout to join
                 self.bitrate_thread = None  # Added this line
-            terminate_process("ffprobe.exe")
-            logging.info("Terminated ffprobe")
-            self.update_bitrate_label("Bitrate: N/A")
+            self.terminate_ffprobe()
+
+    def terminate_ffprobe(self):
+        if not self.ffprobe_terminated:
+            def terminate_ffprobe_thread():
+                logging.info("Terminating ffprobe")
+                terminate_process("ffprobe.exe" if platform.system() == "Windows" else "ffprobe")
+                self.ffprobe_terminated = True
+
+            ffprobe_thread = threading.Thread(target=terminate_ffprobe_thread, daemon=True)
+            ffprobe_thread.start()
+            ffprobe_thread.join()
 
     def update_bitrate_loop(self):
         stream_url = 'udp://localhost:5004'
@@ -209,6 +222,7 @@ class FFplayGUI:
             self.start_monitoring()
 
     def run_ffplay(self):
+        logging.info("Starting ffplay process")
         self.process = subprocess.Popen(
             [str(ffplay_path), '-nodisp', '-flags', 'low_delay', '-fflags', 'nobuffer', '-f', 'mpegts', 'udp://0.0.0.0:5005'],
             stdin=subprocess.PIPE,
@@ -217,6 +231,7 @@ class FFplayGUI:
             creationflags=CREATE_NO_WINDOW  # Use creationflags for Windows
         )
         self.process.communicate()
+        logging.info("ffplay process terminated naturally")
         self.process = None
         self.update_button_states()
         self.update_status("Idle", "blue")
@@ -230,22 +245,22 @@ class FFplayGUI:
             def terminate_process_thread():
                 try:
                     if platform.system() == "Windows":
+                        logging.info("Terminating ffplay process")
                         self.process.terminate()
                     else:
+                        logging.info("Killing ffplay process group")
                         os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                    
-                    logging.info("Terminating ffprobe")
-                    terminate_process("ffprobe")  # Ensure ffprobe is terminated
                 except Exception as e:
                     logging.error(f"Error terminating stream process: {e}")
                 finally:
+                    logging.info("ffplay process termination complete")
                     self.process = None
                     self.update_stop_stream_ui()
                     self.stop_monitoring()
 
             terminate_thread = threading.Thread(target=terminate_process_thread, daemon=True)  # Added daemon=True
             terminate_thread.start()
-            terminate_thread.join(timeout=3)  # Add a timeout to join the thread
+            terminate_thread.join(timeout=.01)  # Add a timeout to join the thread
         else:
             self.update_stop_stream_ui()
             self.stop_monitoring()
@@ -401,7 +416,7 @@ class FFplayGUI:
         logging.info("self.stop_monitoring ran")
         if self.bitrate_thread and self.bitrate_thread.is_alive():
             logging.info("Yes to bitrate thread being alive")
-            self.bitrate_thread.join(timeout=3)  # Ensure the bitrate thread has fully terminated
+            self.bitrate_thread.join(timeout=.01)  # Ensure the bitrate thread has fully terminated
         self.root.destroy()
         logging.info("Application closed")
 
