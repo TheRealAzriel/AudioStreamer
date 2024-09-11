@@ -38,8 +38,10 @@ def terminate_process(process_name):
     else:
         commands = ['pkill', '-f', process_name]
 
+    logging.info(f"Attempting to terminate {process_name} processes.")
     try:
         subprocess.run(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
+        logging.info(f"Successfully terminated {process_name} processes.")
     except Exception as e:
         logging.error(f"Error terminating {process_name} processes: {e}")
 
@@ -131,16 +133,18 @@ class FFplayGUI:
             self.is_monitoring = True
             self.start_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
-            self.bitrate_thread = threading.Thread(target=self.update_bitrate_loop)
+            self.bitrate_thread = threading.Thread(target=self.update_bitrate_loop, daemon=True) # Added daemon=True
             self.bitrate_thread.start()
 
     def stop_monitoring(self):
         if self.is_monitoring:
             self.is_monitoring = False
             if self.bitrate_thread and self.bitrate_thread.is_alive():
-                self.bitrate_thread.join()
+                logging.info("Joining bitrate thread")
+                self.bitrate_thread.join(timeout=3)  # Add a timeout to join
                 self.bitrate_thread = None  # Added this line
             terminate_process("ffprobe.exe")
+            logging.info("Terminated ffprobe")
             self.update_bitrate_label("Bitrate: N/A")
 
     def update_bitrate_loop(self):
@@ -197,7 +201,7 @@ class FFplayGUI:
 
     def start_stream(self):
         if self.process is None:
-            self.stream_thread = threading.Thread(target=self.run_ffplay)
+            self.stream_thread = threading.Thread(target=self.run_ffplay, daemon=True)  # Added daemon=True
             self.stream_thread.start()
             self.start_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
@@ -218,7 +222,7 @@ class FFplayGUI:
         self.update_status("Idle", "blue")
 
     def stop_stream(self):
-        # Stop recording if it is active
+        logging.info("Running stop_stream")
         if self.record_process:
             self.stop_recording()
         
@@ -229,7 +233,8 @@ class FFplayGUI:
                         self.process.terminate()
                     else:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                
+                    
+                    logging.info("Terminating ffprobe")
                     terminate_process("ffprobe")  # Ensure ffprobe is terminated
                 except Exception as e:
                     logging.error(f"Error terminating stream process: {e}")
@@ -238,7 +243,9 @@ class FFplayGUI:
                     self.update_stop_stream_ui()
                     self.stop_monitoring()
 
-            threading.Thread(target=terminate_process_thread).start()
+            terminate_thread = threading.Thread(target=terminate_process_thread, daemon=True)  # Added daemon=True
+            terminate_thread.start()
+            terminate_thread.join(timeout=3)  # Add a timeout to join the thread
         else:
             self.update_stop_stream_ui()
             self.stop_monitoring()
@@ -293,7 +300,7 @@ class FFplayGUI:
 
     def start_recording(self):
         if self.record_thread is None or not self.record_thread.is_alive():
-            self.record_thread = threading.Thread(target=self.run_recording)
+            self.record_thread = threading.Thread(target=self.run_recording, daemon=True)  # Added daemon=True)
             self.record_thread.start()
             self.record_button.config(state=tk.DISABLED)
             self.stop_record_button.config(state=tk.NORMAL)
@@ -327,7 +334,7 @@ class FFplayGUI:
                 logging.info("Sending 'q' to ffmpeg process to stop recording gracefully.")
                 self.record_process.stdin.write(b'q')
                 self.record_process.stdin.flush()
-                stdout, stderr = self.record_process.communicate(timeout=10)
+                stdout, stderr = self.record_process.communicate(timeout=5)
                 logging.info(f"Recording stdout: {stdout.decode('utf-8')}")
                 logging.info(f"Recording stderr: {stderr.decode('utf-8')}")
                 logging.info("Recording process terminated gracefully.")
@@ -387,12 +394,16 @@ class FFplayGUI:
 
     def on_closing(self):
         self.stop_stream()
+        logging.info("self.stop_stream ran")
         self.stop_recording()
+        logging.info("self.stop_recording ran")
         self.stop_monitoring()
-        # Wait for bitrate thread to finish
+        logging.info("self.stop_monitoring ran")
         if self.bitrate_thread and self.bitrate_thread.is_alive():
-            self.bitrate_thread.join()  # Ensure the bitrate thread has fully terminated
+            logging.info("Yes to bitrate thread being alive")
+            self.bitrate_thread.join(timeout=3)  # Ensure the bitrate thread has fully terminated
         self.root.destroy()
+        logging.info("Application closed")
 
 if __name__ == "__main__":
     root = tk.Tk()
