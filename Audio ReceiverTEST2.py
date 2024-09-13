@@ -23,7 +23,7 @@ log_file_path = script_dir / 'app.log'
 log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
 # Set up logging to file
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s',
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
                     handlers=[logging.FileHandler(log_file_path)])
 
 # Construct full paths to 'ffmpeg.exe', 'ffplay.exe' and 'ffprobe.exe' using pathlib
@@ -54,10 +54,8 @@ class FFplayGUI:
         self.root.title("Audio Receiver")
         self.root.geometry("400x475")
 
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(
-            IAudioEndpointVolume._iid_, comtypes.CLSCTX_INPROC_SERVER, None)
-        self.volume = cast(interface, POINTER(IAudioEndpointVolume))
+        self.volume = None
+        self.update_volume_control()  # Initialize volume control
 
         self.process = None
         self.record_process = None
@@ -128,6 +126,26 @@ class FFplayGUI:
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        self.monitor_thread = threading.Thread(target=self.monitor_audio_device_changes, daemon=True)
+        self.monitor_thread.start()
+
+    def update_volume_control(self):
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(
+            IAudioEndpointVolume._iid_, comtypes.CLSCTX_INPROC_SERVER, None)
+        self.volume = cast(interface, POINTER(IAudioEndpointVolume))
+
+    def monitor_audio_device_changes(self):
+        current_device = None
+        while True:
+            new_device = AudioUtilities.GetSpeakers().GetId()
+            if new_device != current_device:
+                current_device = new_device
+                self.update_volume_control()
+                self.volume_slider.set(self.get_current_volume())
+                self.mute_button.itemconfig("circle", fill="red" if not self.is_muted else "green")
+            time.sleep(1)  # Check every second (adjust as needed)
+
     def start_monitoring(self):
         if not self.is_monitoring:
             self.is_monitoring = True
@@ -140,11 +158,11 @@ class FFplayGUI:
         if self.is_monitoring:
             self.is_monitoring = False
             if self.bitrate_thread and self.bitrate_thread.is_alive():
-                logging.info("Joining bitrate thread")
-                self.bitrate_thread.join(timeout=.1)  # Add a timeout to join
+                #logging.info("Joining bitrate thread")
+                #self.bitrate_thread.join(timeout=.1)  # Add a timeout to join
                 self.bitrate_thread = None  # Added this line
             terminate_process("ffprobe.exe")
-            logging.info("Terminated ffprobe")
+            logging.info("Terminate_process ran from stop monitoring to terminate ffprobe")
             self.update_bitrate_label("Bitrate: N/A")
 
     def update_bitrate_loop(self):
@@ -234,7 +252,7 @@ class FFplayGUI:
                     else:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                     
-                    logging.info("Terminating ffprobe")
+                    logging.info("Now calling terminate_process to terminate ffprobe from the stop_stream method")
                     terminate_process("ffprobe")  # Ensure ffprobe is terminated
                 except Exception as e:
                     logging.error(f"Error terminating stream process: {e}")
@@ -242,13 +260,17 @@ class FFplayGUI:
                     self.process = None
                     self.update_stop_stream_ui()
                     self.stop_monitoring()
+                    logging.info("stop_monitoring ran from stop_streams finally block")
 
             terminate_thread = threading.Thread(target=terminate_process_thread, daemon=True)  # Added daemon=True
             terminate_thread.start()
-            terminate_thread.join(timeout=.1)  # Add a timeout to join the thread
+            logging.info("terminate_thread started")
+            #terminate_thread.join(timeout=.1)  # Add a timeout to join the thread
+            logging.info("terminate_thread completed")
         else:
             self.update_stop_stream_ui()
             self.stop_monitoring()
+            logging.info("From stop_stream else statement, stop_monitoring was run")
 
     def update_stop_stream_ui(self):
         self.update_button_states()
@@ -399,11 +421,12 @@ class FFplayGUI:
         logging.info("self.stop_recording ran")
         self.stop_monitoring()
         logging.info("self.stop_monitoring ran")
-        if self.bitrate_thread and self.bitrate_thread.is_alive():
-            logging.info("Yes to bitrate thread being alive")
-            self.bitrate_thread.join(timeout=.1)  # Ensure the bitrate thread has fully terminated
+        #if self.bitrate_thread and self.bitrate_thread.is_alive():
+            #logging.info("Yes to bitrate thread being alive")
+            #self.bitrate_thread.join(timeout=.1)  # Ensure the bitrate thread has fully terminated
         self.root.destroy()
         logging.info("Application closed")
+        logging.info(" ")
 
 if __name__ == "__main__":
     root = tk.Tk()
