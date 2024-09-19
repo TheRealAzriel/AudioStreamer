@@ -1,6 +1,7 @@
+import sys
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
-from pathlib import Path
 import subprocess
 import platform
 import pyaudio
@@ -8,13 +9,12 @@ import logging
 import socket
 import threading
 import json
-import sys
 
 # Initialize logging
 logging.basicConfig(filename='audio_streamer.log', level=logging.DEBUG,
                     format='%(asctime)s %(levelname)s:%(message)s')
 
-# Use _MEIPASS to correctly set the path when bundled with PyInstaller. This is for when compiled as one program.
+# Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
     # Running in a PyInstaller bundle
     base_path = Path(sys._MEIPASS)
@@ -27,15 +27,11 @@ script_dir = base_path
 
 # Set paths
 ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
-executable_path = script_dir / "_internal" / "SetPlayBack" / "SetPlayBack.exe"
-
-# Set icon for the application window and taskbar
+executable_path = script_dir / 'SetPlayBack' / 'SetPlayBack.exe'
 icon_path = script_dir / 'icon' / 'icons8-stream-64.ico'
-
-# File to store IP history
 history_file = script_dir / 'ip_history.json'
 
-# Storage for IP and Name pairs
+# Load IP history
 ip_history = []
 
 def load_ip_history():
@@ -44,11 +40,9 @@ def load_ip_history():
         with open(history_file, 'r') as file:
             ip_history = json.load(file)
 
-
 def save_ip_history():
     with open(history_file, 'w') as file:
         json.dump(ip_history, file)
-
 
 class FFMPEGSenderGUI:
     def __init__(self, root):
@@ -146,7 +140,7 @@ class FFMPEGSenderGUI:
 
         try:
             logging.debug('Terminating any existing ffmpeg processes')
-            subprocess.run(kill_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(kill_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
             logging.debug('ffmpeg processes terminated successfully or no ffmpeg process found')
         except subprocess.CalledProcessError as e:
             # Ignore error if no such process is found
@@ -170,14 +164,23 @@ class FFMPEGSenderGUI:
             return
 
         if self.process is None:
+            # Verify that SetPlayBack.exe exists
+            if not executable_path.exists():
+                logging.error('SetPlayBack.exe not found at path: %s', executable_path)
+                messagebox.showerror("Error", f"SetPlayBack.exe not found at path:\n{executable_path}")
+                return
+
+            # Set the working directory to where SetPlayBack.exe is located
+            playback_work_dir = executable_path.parent
+
             # Call SetPlayBack.exe to configure the audio environment
             try:
                 logging.debug('Running SetPlayBack.exe to configure the audio environment')
-                result = subprocess.run([str(executable_path)], capture_output=True, text=True, check=True)
-                logging.debug('SetPlayBack.exe executed successfully: %s', result.stdout)
+                subprocess.run([str(executable_path)], cwd=playback_work_dir, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                logging.debug('SetPlayBack.exe executed successfully')
             except subprocess.CalledProcessError as e:
-                logging.error('Failed to execute SetPlayBack.exe: %s. Output: %s', e, e.stderr)
-                messagebox.showerror("Error", f"Failed to configure audio environment:\n{e.stderr}")
+                logging.error('Failed to execute SetPlayBack.exe: %s', e)
+                messagebox.showerror("Error", "Failed to configure audio environment.")
                 return
 
             command = [
@@ -197,7 +200,7 @@ class FFMPEGSenderGUI:
                 '-f', 'mpegts', f'udp://{ip_address}:5006'
             ]
             logging.debug('Running ffmpeg command: %s', ' '.join(command))
-            self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
 
             self.output_thread = threading.Thread(target=self.handle_output, args=(self.process.stdout,))
             self.output_thread.start()
@@ -226,7 +229,6 @@ class FFMPEGSenderGUI:
         logging.debug('Closing application')
         self.stop_stream()
         self.root.destroy()
-
 
 if __name__ == "__main__":
     logging.debug('Starting Audio Streamer application')
