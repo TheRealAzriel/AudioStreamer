@@ -9,6 +9,8 @@ import logging
 import socket
 import threading
 import json
+import os
+import ctypes
 
 # Initialize logging
 logging.basicConfig(filename='audio_streamer.log', level=logging.DEBUG,
@@ -30,6 +32,9 @@ ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
 executable_path = script_dir / 'SetPlayBack' / 'SetPlayBack.exe'
 icon_path = script_dir / 'icon' / 'icons8-stream-64.ico'
 history_file = script_dir / 'ip_history.json'
+vb_cable_dir = script_dir / 'VBCABLE_Driver_Pack43'
+vb_cable_path_x64 = vb_cable_dir / 'VBCABLE_Setup_x64.exe'
+vb_cable_path_x86 = vb_cable_dir / 'VBCABLE_Setup.exe'
 
 # Load IP history
 ip_history = []
@@ -44,11 +49,87 @@ def save_ip_history():
     with open(history_file, 'w') as file:
         json.dump(ip_history, file)
 
+# Existing path setup code, added for completeness
+if hasattr(sys, '_MEIPASS'):
+    base_path = Path(sys._MEIPASS)
+else:
+    base_path = Path(__file__).parent.resolve()
+
+script_dir = base_path
+
+vb_cable_dir = script_dir / 'VBCABLE_Driver_Pack43'
+vb_cable_path_x64 = vb_cable_dir / 'VBCABLE_Setup_x64.exe'
+vb_cable_path_x86 = vb_cable_dir / 'VBCABLE_Setup.exe'
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+def install_vb_cable():
+    # Determine the system architecture
+    bitness = platform.architecture()[0]
+
+    if bitness == "64bit":
+        installer_path = vb_cable_path_x64
+    else:
+        installer_path = vb_cable_path_x86
+
+    if not installer_path.exists():
+        messagebox.showerror("Error", "VB-CABLE installer not found. Cannot proceed with installation.")
+        return False
+
+    logging.debug('Running VB-CABLE installer as admin: %s', installer_path)
+    try:
+        if platform.system() == "Windows":
+            # Elevate privileges and run the installer
+            run_command = [
+                'powershell',
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-Command', f"Start-Process cmd -ArgumentList '/c \"{str(installer_path)}\"' -Verb runas -Wait"
+            ]
+            logging.debug('Command to run: %s', run_command)
+
+            # Capture both stdout and stderr
+            result = subprocess.run(run_command, check=True, creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            logging.debug('Installation stdout: %s', result.stdout)
+            logging.debug('Installation stderr: %s', result.stderr)
+        else:
+            result = subprocess.run([str(installer_path)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            logging.debug('Installation stdout: %s', result.stdout)
+            logging.debug('Installation stderr: %s', result.stderr)
+        
+        messagebox.showinfo("Installation", "VB-CABLE installation has completed.")
+        logging.debug('VB-CABLE installation finished successfully.')
+        return True
+
+    except subprocess.CalledProcessError as e:
+        logging.error('VB-CABLE installation failed with error: %s\nReturn code: %d\nOutput: %s\nStderr: %s', e, e.returncode, e.output, e.stderr)
+        messagebox.showerror("Error", "Failed to install VB-CABLE.")
+        return False
+    except Exception as e:
+        logging.error('Unexpected error during VB-CABLE installation: %s', e)
+        messagebox.showerror("Error", "Failed to install VB-CABLE due to an unexpected error.")
+        return False
+
+
 class FFMPEGSenderGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Audio Streamer")
         self.root.geometry("400x250")
+
+        # Set the icon for the application window and taskbar
+        try:
+            logging.debug('Setting icon from path: %s', icon_path)
+            if icon_path.exists():
+                self.root.iconbitmap(str(icon_path))
+            else:
+                logging.error('Icon file not found: %s', icon_path)
+        except Exception as e:
+            logging.error('Failed to set icon: %s', e)
 
         self.ip_label = tk.Label(root, text="Receiver IP:", font=("Arial", 12))
         self.ip_label.place(x=20, y=30)
@@ -160,8 +241,11 @@ class FFMPEGSenderGUI:
 
         audio_device = "CABLE Output (VB-Audio Virtual Cable)"
         if not self.check_audio_device(audio_device):
-            messagebox.showerror("Error", f"Audio device '{audio_device}' not found.")
-            return
+            if messagebox.askyesno("Audio Device Not Found", "VB-Audio Virtual Cable is required. Do you want to install it now?"):
+                if not install_vb_cable():
+                    return
+            else:
+                return
 
         if self.process is None:
             # Verify that SetPlayBack.exe exists
@@ -233,6 +317,14 @@ class FFMPEGSenderGUI:
 if __name__ == "__main__":
     logging.debug('Starting Audio Streamer application')
     root = tk.Tk()
+    try:
+        logging.debug('Setting main window icon from path: %s', icon_path)
+        if icon_path.exists():
+            root.iconbitmap(str(icon_path))
+        else:
+            logging.error('Icon file not found: %s', icon_path)
+    except Exception as e:
+        logging.error('Failed to set main window icon: %s', e)
     app = FFMPEGSenderGUI(root)
     root.mainloop()
     logging.debug('Audio Streamer application closed')
