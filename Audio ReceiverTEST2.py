@@ -2,6 +2,7 @@ import tkinter as tk
 from pathlib import Path
 import subprocess
 import os
+import sys
 import time
 import logging
 import threading
@@ -10,14 +11,27 @@ import signal
 import socket
 from ctypes import POINTER, cast
 import comtypes
+from comtypes import CoInitialize
+from comtypes import CoUninitialize
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
 
-# Get the directory of the current script.
-script_dir = Path(__file__).parent.resolve()
+# Use _MEIPASS to correctly set the path when bundled with PyInstaller
+if hasattr(sys, '_MEIPASS'):
+    base_path = Path(sys._MEIPASS)
+else:
+    base_path = Path(__file__).parent.resolve()
 
-# Define log file path
-log_file_path = script_dir / 'app.log'
+# Define paths
+script_dir = base_path
+user_home_dir = Path.home()  # This gets the user's home directory
+appdata_local_path = user_home_dir / 'AppData' / 'Local' / 'Audio Receiver'
+
+# Icon path
+icon_path = script_dir / 'icon' / 'icons8-stream-64.ico'
+
+# Define log file path within AppData\Local
+log_file_path = appdata_local_path / 'Audio_Receiver.log'
 
 # Ensure the log file directory exists
 log_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,6 +45,8 @@ ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
 ffplay_path = script_dir / 'ffmpeg' / 'bin' / 'ffplay.exe'
 ffprobe_path = script_dir / 'ffmpeg' / 'bin' / 'ffprobe.exe'
 
+logging.info("Application started")
+
 # Function to terminate processes by name
 def terminate_process(process_name):
     if platform.system() == "Windows":
@@ -38,10 +54,10 @@ def terminate_process(process_name):
     else:
         commands = ['pkill', '-f', process_name]
 
-    logging.info(f"Attempting to terminate {process_name} processes.")
+    #logging.info(f"Attempting to terminate {process_name} processes.")
     try:
         subprocess.run(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
-        logging.info(f"Successfully terminated {process_name} processes.")
+        #logging.info(f"Successfully terminated {process_name} processes.")
     except Exception as e:
         logging.error(f"Error terminating {process_name} processes: {e}")
 
@@ -54,7 +70,17 @@ class FFplayGUI:
         self.root.title("Audio Receiver")
         self.root.geometry("400x475")
 
-        self.volume = None
+        # Set the icon for the application window and taskbar
+        try:
+            logging.debug('Setting icon from path: %s', icon_path)
+            if icon_path.exists():
+                self.root.iconbitmap(str(icon_path))
+            else:
+                logging.error('Icon file not found: %s', icon_path)
+        except Exception as e:
+            logging.error('Failed to set icon: %s', e)
+
+        #self.volume = None
         self.update_volume_control()  # Initialize volume control
 
         self.process = None
@@ -130,21 +156,27 @@ class FFplayGUI:
         self.monitor_thread.start()
 
     def update_volume_control(self):
+        #CoInitialize()  # Initialize COM library
         devices = AudioUtilities.GetSpeakers()
         interface = devices.Activate(
             IAudioEndpointVolume._iid_, comtypes.CLSCTX_INPROC_SERVER, None)
         self.volume = cast(interface, POINTER(IAudioEndpointVolume))
+        #CoUninitialize()  # Uninitialize COM library
 
     def monitor_audio_device_changes(self):
-        current_device = None
-        while True:
-            new_device = AudioUtilities.GetSpeakers().GetId()
-            if new_device != current_device:
-                current_device = new_device
-                self.update_volume_control()
-                self.volume_slider.set(self.get_current_volume())
-                self.mute_button.itemconfig("circle", fill="red" if not self.is_muted else "green")
-            time.sleep(1)  # Check every second (adjust as needed)
+        CoInitialize()  # Initialize COM library for the thread
+        try:
+            current_device = None
+            while True:
+                new_device = AudioUtilities.GetSpeakers().GetId()
+                if new_device != current_device:
+                    current_device = new_device
+                    self.update_volume_control()
+                    self.volume_slider.set(self.get_current_volume())
+                    self.mute_button.itemconfig("circle", fill="red" if not self.is_muted else "green")
+                time.sleep(1)  # Check every second (adjust as needed)
+        finally:
+            CoUninitialize()  # Uninitialize COM library at the end of the thread
 
     def start_monitoring(self):
         if not self.is_monitoring:
@@ -162,7 +194,7 @@ class FFplayGUI:
                 #self.bitrate_thread.join(timeout=.1)  # Add a timeout to join
                 self.bitrate_thread = None  # Added this line
             terminate_process("ffprobe.exe")
-            logging.info("Terminate_process ran from stop monitoring to terminate ffprobe")
+            #logging.info("Terminate_process ran from stop monitoring to terminate ffprobe")
             self.update_bitrate_label("Bitrate: N/A")
 
     def update_bitrate_loop(self):
@@ -214,8 +246,10 @@ class FFplayGUI:
         return ip
 
     def get_current_volume(self):
-        current_volume = self.volume.GetMasterVolumeLevelScalar()
-        return int(current_volume * 100)
+        if self.volume:
+            current_volume = self.volume.GetMasterVolumeLevelScalar()
+            return int(current_volume * 100)
+        return 0
 
     def start_stream(self):
         if self.process is None:
@@ -240,7 +274,7 @@ class FFplayGUI:
         self.update_status("Idle", "blue")
 
     def stop_stream(self):
-        logging.info("Running stop_stream")
+        #logging.info("Running stop_stream")
         if self.record_process:
             self.stop_recording()
         
@@ -252,7 +286,7 @@ class FFplayGUI:
                     else:
                         os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                     
-                    logging.info("Now calling terminate_process to terminate ffprobe from the stop_stream method")
+                    #logging.info("Now calling terminate_process to terminate ffprobe from the stop_stream method")
                     terminate_process("ffprobe")  # Ensure ffprobe is terminated
                 except Exception as e:
                     logging.error(f"Error terminating stream process: {e}")
@@ -260,17 +294,17 @@ class FFplayGUI:
                     self.process = None
                     self.update_stop_stream_ui()
                     self.stop_monitoring()
-                    logging.info("stop_monitoring ran from stop_streams finally block")
+                    #logging.info("stop_monitoring ran from stop_streams finally block")
 
             terminate_thread = threading.Thread(target=terminate_process_thread, daemon=True)  # Added daemon=True
             terminate_thread.start()
-            logging.info("terminate_thread started")
+            #logging.info("terminate_thread started")
             #terminate_thread.join(timeout=.1)  # Add a timeout to join the thread
-            logging.info("terminate_thread completed")
+            #logging.info("terminate_thread completed")
         else:
             self.update_stop_stream_ui()
             self.stop_monitoring()
-            logging.info("From stop_stream else statement, stop_monitoring was run")
+            #logging.info("From stop_stream else statement, stop_monitoring was run")
 
     def update_stop_stream_ui(self):
         self.update_button_states()
@@ -353,13 +387,13 @@ class FFplayGUI:
     def stop_recording(self):
         if self.record_process:
             try:
-                logging.info("Sending 'q' to ffmpeg process to stop recording gracefully.")
+                #logging.info("Sending 'q' to ffmpeg process to stop recording gracefully.")
                 self.record_process.stdin.write(b'q')
                 self.record_process.stdin.flush()
                 stdout, stderr = self.record_process.communicate(timeout=5)
-                logging.info(f"Recording stdout: {stdout.decode('utf-8')}")
-                logging.info(f"Recording stderr: {stderr.decode('utf-8')}")
-                logging.info("Recording process terminated gracefully.")
+                #logging.info(f"Recording stdout: {stdout.decode('utf-8')}")
+                #logging.info(f"Recording stderr: {stderr.decode('utf-8')}")
+                #logging.info("Recording process terminated gracefully.")
             except subprocess.TimeoutExpired:
                 logging.warning("Timed out. Forcibly terminating the recording process.")
                 self.terminate_process(self.record_process)
@@ -416,11 +450,11 @@ class FFplayGUI:
 
     def on_closing(self):
         self.stop_stream()
-        logging.info("self.stop_stream ran")
+        #logging.info("self.stop_stream ran")
         self.stop_recording()
-        logging.info("self.stop_recording ran")
+        #logging.info("self.stop_recording ran")
         self.stop_monitoring()
-        logging.info("self.stop_monitoring ran")
+        #logging.info("self.stop_monitoring ran")
         #if self.bitrate_thread and self.bitrate_thread.is_alive():
             #logging.info("Yes to bitrate thread being alive")
             #self.bitrate_thread.join(timeout=.1)  # Ensure the bitrate thread has fully terminated
