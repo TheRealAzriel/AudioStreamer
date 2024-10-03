@@ -12,10 +12,6 @@ import json
 import os
 import ctypes
 
-# Initialize logging
-logging.basicConfig(filename='audio_streamer.log', level=logging.DEBUG,
-                    format='%(asctime)s %(levelname)s:%(message)s')
-
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
     # Running in a PyInstaller bundle
@@ -24,8 +20,23 @@ else:
     # Running in a normal Python environment
     base_path = Path(__file__).parent.resolve()
 
+
 # Define script path
 script_dir = base_path
+user_home_dir = Path.home()  # This gets the user's home directory
+appdata_local_path = user_home_dir / 'AppData' / 'Local' / 'Audio Streamer'
+
+# Define log file path within AppData\Local
+log_file_path = appdata_local_path / 'Audio_Receiver.log'
+
+# Ensure the log file directory exists
+log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+# Initialize logging correctly to the path in appdata_local_path
+logging.basicConfig(filename=log_file_path, level=logging.DEBUG,
+                    format='%(asctime)s %(levelname)s:%(message)s')
+
+logging.debug('Starting App...')
 
 # Set paths
 ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
