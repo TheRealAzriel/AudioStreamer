@@ -172,7 +172,7 @@ class FFMPEGSenderGUI:
 
         self.process = None
         self.output_thread = None
-        self.error_thread = None
+        self.error_thread = None  
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # Load IP history on startup
