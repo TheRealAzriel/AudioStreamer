@@ -125,12 +125,18 @@ def install_vb_cable():
         messagebox.showerror("Error", "Failed to install VB-CABLE due to an unexpected error.")
         return False
 
+def delete_ip_history():
+    global ip_history
+    ip_history = []
+    save_ip_history()
 
 class FFMPEGSenderGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Audio Streamer")
         self.root.geometry("400x250")
+        self.clear_history_button = tk.Button(root, text="Clear History", command=self.clear_ip_history, width=15, relief="raised", bd=2)
+        self.clear_history_button.place(x=140, y=145)
 
         # Set the icon for the application window and taskbar
         try:
@@ -159,9 +165,9 @@ class FFMPEGSenderGUI:
         self.name_entry.place(x=140, y=70, width=200)
 
         self.start_button = tk.Button(root, text="Start Stream", command=self.start_stream, width=15, height=2, relief="raised", bd=2)
-        self.start_button.place(x=50, y=180)
+        self.start_button.place(x=50, y=190)
         self.stop_button = tk.Button(root, text="Stop Stream", command=self.stop_stream, width=15, height=2, relief="raised", bd=2)
-        self.stop_button.place(x=230, y=180)
+        self.stop_button.place(x=230, y=190)
         self.stop_button.config(state=tk.DISABLED)
 
         self.process = None
@@ -319,6 +325,12 @@ class FFMPEGSenderGUI:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
             logging.debug('Stream stopped successfully')
+
+    def clear_ip_history(self):
+        if messagebox.askyesno("Clear History", "Are you sure you want to clear the IP history?"):
+            delete_ip_history()
+            self.update_ip_dropdown()
+            messagebox.showinfo("IP History", "IP history cleared.")
 
     def on_closing(self):
         logging.debug('Closing application')
