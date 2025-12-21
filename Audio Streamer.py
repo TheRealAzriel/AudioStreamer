@@ -4,13 +4,16 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import subprocess
 import platform
-import pyaudio
 import logging
 import socket
 import threading
 import json
 import os
 import ctypes
+from ctypes import POINTER, cast
+import comtypes
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from datetime import datetime
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
@@ -134,9 +137,8 @@ class FFMPEGSenderGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Audio Streamer")
-        self.root.geometry("400x250")
-        self.clear_history_button = tk.Button(root, text="Clear History", command=self.clear_ip_history, width=15, relief="raised", bd=2)
-        self.clear_history_button.place(x=140, y=145)
+        self.root.geometry("450x400")
+        self.root.resizable(False, False)
 
         # Set the icon for the application window and taskbar
         try:
@@ -148,31 +150,60 @@ class FFMPEGSenderGUI:
         except Exception as e:
             logging.error('Failed to set icon: %s', e)
 
-        self.ip_label = tk.Label(root, text="Receiver IP:", font=("Arial", 12))
-        self.ip_label.place(x=20, y=30)
+        # Connection Details Section
+        connection_frame = tk.LabelFrame(root, text="Connection Details", font=("Arial", 10, "bold"))
+        connection_frame.place(x=20, y=20, width=410, height=90)
 
-        self.ip_entry = tk.Entry(root, font=("Arial", 12))
-        self.ip_entry.place(x=140, y=30, width=200)
+        self.ip_label = tk.Label(connection_frame, text="Receiver IP:", font=("Arial", 10))
+        self.ip_label.place(x=15, y=15)
+        self.ip_entry = tk.Entry(connection_frame, font=("Arial", 10))
+        self.ip_entry.place(x=120, y=13, width=260)
 
+        self.name_label = tk.Label(connection_frame, text="Name:", font=("Arial", 10))
+        self.name_label.place(x=15, y=45)
+        self.name_entry = tk.Entry(connection_frame, font=("Arial", 10))
+        self.name_entry.place(x=120, y=43, width=260)
+
+        # History Management Section
+        history_frame = tk.LabelFrame(root, text="Saved Connections", font=("Arial", 10, "bold"))
+        history_frame.place(x=20, y=130, width=410, height=140)
+
+        tk.Label(history_frame, text="Select:", font=("Arial", 10)).place(x=15, y=15)
         self.ip_var = tk.StringVar()
-        self.ip_dropdown = ttk.Combobox(root, textvariable=self.ip_var, font=("Arial", 12), postcommand=self.update_ip_dropdown)
-        self.ip_dropdown.place(x=100, y=110, width=240, height=25)
+        self.ip_dropdown = ttk.Combobox(history_frame, textvariable=self.ip_var, font=("Arial", 9), 
+                                       postcommand=self.update_ip_dropdown, state="readonly")
+        self.ip_dropdown.place(x=15, y=35, width=375, height=25)
         self.ip_dropdown.bind("<<ComboboxSelected>>", self.on_ip_selected)
 
-        self.name_label = tk.Label(root, text="Name:", font=("Arial", 12))
-        self.name_label.place(x=20, y=70)
-        self.name_entry = tk.Entry(root, font=("Arial", 12))
-        self.name_entry.place(x=140, y=70, width=200)
+        # History management buttons in a row with better spacing
+        self.delete_selected_button = tk.Button(history_frame, text="Delete Selected", 
+                                              command=self.delete_selected_ip, width=16, 
+                                              font=("Arial", 9), relief="raised", bd=1)
+        self.delete_selected_button.place(x=80, y=80)
 
-        self.start_button = tk.Button(root, text="Start Stream", command=self.start_stream, width=15, height=2, relief="raised", bd=2)
-        self.start_button.place(x=50, y=190)
-        self.stop_button = tk.Button(root, text="Stop Stream", command=self.stop_stream, width=15, height=2, relief="raised", bd=2)
-        self.stop_button.place(x=230, y=190)
+        self.clear_history_button = tk.Button(history_frame, text="Clear All", 
+                                            command=self.clear_ip_history, width=16, 
+                                            font=("Arial", 9), relief="raised", bd=1)
+        self.clear_history_button.place(x=220, y=80)
+
+        # Stream Controls Section
+        controls_frame = tk.LabelFrame(root, text="Stream Control", font=("Arial", 10, "bold"))
+        controls_frame.place(x=20, y=290, width=410, height=90)
+
+        self.start_button = tk.Button(controls_frame, text="Start Stream", command=self.start_stream, 
+                                    width=15, height=2, font=("Arial", 10, "bold"), 
+                                    bg="#4CAF50", fg="white", relief="raised", bd=2)
+        self.start_button.place(x=40, y=10)
+
+        self.stop_button = tk.Button(controls_frame, text="Stop Stream", command=self.stop_stream, 
+                                   width=15, height=2, font=("Arial", 10, "bold"), 
+                                   bg="#f44336", fg="white", relief="raised", bd=2)
+        self.stop_button.place(x=220, y=10)
         self.stop_button.config(state=tk.DISABLED)
 
         self.process = None
         self.output_thread = None
-        self.error_thread = None
+        self.error_thread = None  
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # Load IP history on startup
@@ -191,17 +222,19 @@ class FFMPEGSenderGUI:
 
     def check_audio_device(self, device_name):
         logging.debug('Checking for audio device: %s', device_name)
-        p = pyaudio.PyAudio()
-        device_count = p.get_device_count()
-        for i in range(device_count):
-            device_info = p.get_device_info_by_index(i)
-            if device_name in device_info.get('name', ''):
-                p.terminate()
-                logging.debug('Audio device found: %s', device_name)
-                return True
-        p.terminate()
-        logging.error('Audio device not found: %s', device_name)
-        return False
+        try:
+            # Get all audio devices
+            devices = AudioUtilities.GetAllDevices()
+            for device in devices:
+                if device.FriendlyName == device_name:
+                    logging.debug('Audio device found: %s', device_name)
+                    return True
+            
+            logging.debug('Audio device not found: %s', device_name)
+            return False
+        except Exception as e:
+            logging.error('Error checking for audio device: %s', e)
+            return False
 
     def handle_output(self, pipe):
         for line in iter(pipe.readline, b''):
@@ -330,7 +363,54 @@ class FFMPEGSenderGUI:
         if messagebox.askyesno("Clear History", "Are you sure you want to clear the IP history?"):
             delete_ip_history()
             self.update_ip_dropdown()
+            self.ip_entry.delete(0, tk.END)
+            self.name_entry.delete(0, tk.END)
+            self.ip_dropdown.set('')
             messagebox.showinfo("IP History", "IP history cleared.")
+
+    def delete_selected_ip(self):
+        selected_text = self.ip_dropdown.get()
+        if not selected_text:
+            messagebox.showwarning("No Selection", "Please select an IP record to delete from the dropdown.")
+            return
+        
+        # Parse the selected text to get the IP and name
+        try:
+            name, ip = selected_text.split(": ")
+        except ValueError:
+            messagebox.showerror("Error", "Invalid selection format.")
+            return
+        
+        # Confirm deletion
+        if messagebox.askyesno("Delete Record", f"Are you sure you want to delete the record:\n{name}: {ip}?"):
+            # Find and remove the record from ip_history
+            global ip_history
+            for index, (existing_ip, existing_name) in enumerate(ip_history):
+                if existing_ip == ip and existing_name == name:
+                    ip_history.pop(index)
+                    break
+            else:
+                messagebox.showerror("Error", "Record not found in history.")
+                return
+            
+            # Save updated history
+            save_ip_history()
+            
+            # Update dropdown
+            self.update_ip_dropdown()
+            
+            # Clear the entries if they match the deleted record
+            current_ip = self.ip_entry.get()
+            current_name = self.name_entry.get()
+            if current_ip == ip and current_name == name:
+                self.ip_entry.delete(0, tk.END)
+                self.name_entry.delete(0, tk.END)
+            
+            # Clear dropdown selection
+            self.ip_dropdown.set('')
+            
+            logging.debug('Deleted IP record: %s - %s', name, ip)
+            messagebox.showinfo("Record Deleted", f"Record '{name}: {ip}' has been deleted.")
 
     def on_closing(self):
         logging.debug('Closing application')
