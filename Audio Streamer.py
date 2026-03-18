@@ -30,7 +30,7 @@ user_home_dir = Path.home()  # This gets the user's home directory
 appdata_local_path = user_home_dir / 'AppData' / 'Local' / 'Audio Streamer'
 
 # Define log file path within AppData\Local
-log_file_path = appdata_local_path / 'Audio_Receiver.log'
+log_file_path = appdata_local_path / 'Audio_Streamer.log'
 
 # Ensure the log file directory exists
 log_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -47,6 +47,29 @@ executable_path = script_dir / 'SetPlayBack' / 'SetPlayBack.exe'
 icon_path = script_dir / 'icon' / 'icons8-stream-64.ico'
 history_file = script_dir / 'ip_history.json'
 vb_cable_dir = script_dir / 'VBCABLE_Driver_Pack43'
+
+# Log path information for debugging
+logging.debug(f"Base path: {script_dir}")
+logging.debug(f"Looking for ffmpeg at: {ffmpeg_path}")
+logging.debug(f"ffmpeg.exe exists: {ffmpeg_path.exists()}")
+logging.debug(f"SetPlayback.exe exists: {executable_path.exists()}")
+
+# Validate critical paths exist
+if not ffmpeg_path.exists():
+    logging.error(f"CRITICAL: ffmpeg.exe not found at {ffmpeg_path}")
+    # Try to find ffmpeg folder structure
+    ffmpeg_dir = script_dir / 'ffmpeg'
+    logging.debug(f"ffmpeg directory exists: {ffmpeg_dir.exists()}")
+    if ffmpeg_dir.exists():
+        bin_dir = ffmpeg_dir / 'bin'
+        logging.debug(f"bin directory exists: {bin_dir.exists()}")
+        if bin_dir.exists():
+            try:
+                bin_contents = list(bin_dir.iterdir())
+                logging.debug(f"Contents of bin directory: {[f.name for f in bin_contents]}")
+            except Exception as e:
+                logging.error(f"Error listing bin directory: {e}")
+
 vb_cable_path_x64 = vb_cable_dir / 'VBCABLE_Setup_x64.exe'
 vb_cable_path_x86 = vb_cable_dir / 'VBCABLE_Setup.exe'
 
@@ -63,17 +86,7 @@ def save_ip_history():
     with open(history_file, 'w') as file:
         json.dump(ip_history, file)
 
-# Existing path setup code, added for completeness
-if hasattr(sys, '_MEIPASS'):
-    base_path = Path(sys._MEIPASS)
-else:
-    base_path = Path(__file__).parent.resolve()
-
-script_dir = base_path
-
-vb_cable_dir = script_dir / 'VBCABLE_Driver_Pack43'
-vb_cable_path_x64 = vb_cable_dir / 'VBCABLE_Setup_x64.exe'
-vb_cable_path_x86 = vb_cable_dir / 'VBCABLE_Setup.exe'
+# Duplicate _MEIPASS logic removed - already defined above
 
 def is_admin():
     try:
@@ -263,22 +276,9 @@ class FFMPEGSenderGUI:
     def start_stream(self):
         logging.debug('Starting stream...')
 
-        # Kill any running ffmpeg processes
-        if platform.system() == "Windows":
-            kill_command = ["taskkill", "/IM", "ffmpeg.exe", "/F"]
-        else:
-            kill_command = ["pkill", "-f", "ffmpeg"]
-
-        try:
-            logging.debug('Terminating any existing ffmpeg processes')
-            subprocess.run(kill_command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
-            logging.debug('ffmpeg processes terminated successfully or no ffmpeg process found')
-        except subprocess.CalledProcessError as e:
-            # Ignore error if no such process is found
-            if "not found" in str(e.stderr).lower():
-                logging.debug('No existing ffmpeg processes found to terminate.')
-            else:
-                logging.error('Error occurred while attempting to terminate ffmpeg processes: %s', e)
+        # Check if already streaming and stop gracefully
+        if self.process:
+            self.stop_stream()
 
         ip_address = self.ip_entry.get()
         name = self.name_entry.get()
@@ -310,28 +310,38 @@ class FFMPEGSenderGUI:
             # Call SetPlayBack.exe to configure the audio environment
             try:
                 logging.debug('Running SetPlayBack.exe to configure the audio environment')
-                subprocess.run([str(executable_path)], cwd=playback_work_dir, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                # Use resolved absolute path for subprocess call
+                setplayback_exe = str(executable_path.resolve())
+                subprocess.run([setplayback_exe], cwd=playback_work_dir, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 logging.debug('SetPlayBack.exe executed successfully')
             except subprocess.CalledProcessError as e:
                 logging.error('Failed to execute SetPlayBack.exe: %s', e)
                 messagebox.showerror("Error", "Failed to configure audio environment.")
                 return
 
+            # Ensure ffmpeg path exists and resolve any path issues  
+            if not ffmpeg_path.exists():
+                logging.error(f"ffmpeg.exe not found at {ffmpeg_path}")
+                messagebox.showerror("Error", f"ffmpeg.exe not found at:\n{ffmpeg_path}")
+                return
+                
+            # Use absolute path and ensure proper string conversion
+            ffmpeg_exe = str(ffmpeg_path.resolve())
+            logging.debug(f"Using ffmpeg executable at: {ffmpeg_exe}")
+
+            # Optimized FFmpeg command for low-latency TCP streaming
             command = [
-                str(ffmpeg_path),
-                '-fflags', 'nobuffer',
+                ffmpeg_exe,  # Use resolved absolute path
+                '-hide_banner', '-loglevel', 'error',  # Clean logs
                 '-f', 'dshow',
+                '-audio_buffer_size', '50',           # Small buffer for low latency
                 '-i', f'audio={audio_device}',
-                '-probesize', '32',
-                '-analyzeduration', '0',
-                '-bufsize', '1000k',
-                '-acodec', 'aac',
+                '-codec:a', 'libmp3lame',             # MP3 faster than AAC
                 '-b:a', '192k',
-                '-fflags', '+genpts+discardcorrupt',
-                '-flags', '+global_header+low_delay',
-                '-f', 'mpegts', f'udp://{ip_address}:5004',
-                '-f', 'mpegts', f'udp://{ip_address}:5005',
-                '-f', 'mpegts', f'udp://{ip_address}:5006'
+                '-f', 'mpegts',
+                '-flush_packets', '1',                # Force immediate packet transmission
+                # Single TCP connection with optimizations
+                f'tcp://{ip_address}:6005?timeout=5000000&tcp_nodelay=1'
             ]
             logging.debug('Running ffmpeg command: %s', ' '.join(command))
             self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -352,12 +362,25 @@ class FFMPEGSenderGUI:
     def stop_stream(self):
         logging.debug('Stopping stream...')
         if self.process:
-            self.process.terminate()
-            self.process.wait()
-            self.process = None
-            self.start_button.config(state=tk.NORMAL)
-            self.stop_button.config(state=tk.DISABLED)
-            logging.debug('Stream stopped successfully')
+            try:
+                # Try to stop FFmpeg gracefully by sending 'q'
+                self.process.stdin.write(b'q')
+                self.process.stdin.flush()
+                self.process.wait(timeout=3)
+                logging.debug('Stream terminated gracefully with q command')
+            except Exception as e:
+                logging.warning(f'Graceful stop failed, forcing kill: {e}')
+                try:
+                    self.process.kill()
+                    self.process.wait()  # Wait for the kill to complete
+                    logging.debug('Stream process killed')
+                except Exception as kill_error:
+                    logging.error(f'Error killing process: {kill_error}')
+            finally:
+                self.process = None
+                self.start_button.config(state=tk.NORMAL)
+                self.stop_button.config(state=tk.DISABLED)
+                logging.debug('Stream stopped successfully')
 
     def clear_ip_history(self):
         if messagebox.askyesno("Clear History", "Are you sure you want to clear the IP history?"):
