@@ -94,6 +94,8 @@ class FFplayGUI:
         self.root = root
         self.root.title("Audio Receiver")
         self.root.geometry("400x475")
+        self.primary_button_font = ("Arial", 10, "bold")
+        self.secondary_button_font = ("Arial", 9, "bold")
         # Window is already withdrawn from main block
         # Using default system background color (like Audio Streamer)
 
@@ -158,6 +160,8 @@ class FFplayGUI:
             bg="lightgreen", 
             relief="raised", 
             bd=2,
+            highlightthickness=0,
+            takefocus=0,
             padx=0,                   # Remove internal horizontal padding
             pady=0,                   # Remove internal vertical padding
             font=("Segoe UI Symbol", 12) # Better font for emojis on Windows
@@ -173,14 +177,17 @@ class FFplayGUI:
 
         self.start_button = tk.Button(stream_frame, text="Receive Stream", command=self.start_stream, width=20, height=2, bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), relief="flat", bd=1, disabledforeground="#111111")
         self.start_button.place(x=25, y=25)
+        self.style_button(self.start_button, normal_color="#4CAF50", hover_color="#45a049", font=self.primary_button_font)
         self.add_hover(self.start_button, "#45a049", "#4CAF50")
         
         self.stop_button = tk.Button(stream_frame, text="Stop Receiving", command=self.stop_stream, state=tk.DISABLED, width=20, height=2, bg="#f44336", fg="white", font=("Arial", 10, "bold"), relief="flat", bd=1, disabledforeground="#111111")
         self.stop_button.place(x=25, y=115)
+        self.style_button(self.stop_button, normal_color="#f44336", hover_color="#d32f2f", font=self.primary_button_font)
         self.add_hover(self.stop_button, "#d32f2f", "#f44336")
 
         self.record_button = tk.Button(stream_frame, text="Receive & Record", command=self.start_recording, width=20, height=2, bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), relief="flat", bd=1, disabledforeground="#111111")
         self.record_button.place(x=25, y=205)
+        self.style_button(self.record_button, normal_color="#4CAF50", hover_color="#45a049", font=self.primary_button_font)
         self.add_hover(self.record_button, "#45a049", "#4CAF50")
 
         # Create a dedicated container for status with health indicator
@@ -206,6 +213,7 @@ class FFplayGUI:
                                    bg="#2196F3", fg="white", font=("Arial", 9, "bold"),
                                    relief="flat", bd=1, disabledforeground="#111111")
         self.play_button.place(x=80, y=390)      # Recentered
+        self.style_button(self.play_button, normal_color="#2196F3", hover_color="#1976D2", font=self.secondary_button_font)
         self.add_hover(self.play_button, "#1976D2", "#2196F3")
         
         self.stop_play_button = tk.Button(root, text="Stop Playing", command=self.stop_playing,
@@ -213,6 +221,7 @@ class FFplayGUI:
                                          bg="#f44336", fg="white", font=("Arial", 9, "bold"),
                                          relief="flat", bd=1, disabledforeground="#111111")
         self.stop_play_button.place(x=230, y=390) # Recentered with proper spacing
+        self.style_button(self.stop_play_button, normal_color="#f44336", hover_color="#d32f2f", font=self.secondary_button_font)
         self.add_hover(self.stop_play_button, "#d32f2f", "#f44336")
         self.update_play_button_state()  # Initial update based on the presence of the recording file
 
@@ -227,18 +236,42 @@ class FFplayGUI:
         # Show window now that all elements are positioned
         self.root.deiconify()
 
+    def style_button(self, button, normal_color, hover_color, font):
+        """Apply a consistent raised style with readable disabled text."""
+        button.config(
+            bg=normal_color,
+            fg="white",
+            font=font,
+            activebackground=hover_color,
+            activeforeground="white",
+            disabledforeground="#111111",
+            relief="raised",
+            bd=2,
+            cursor="hand2"
+        )
+
     def add_hover(self, button, hover_color, normal_color):
-        """Add hover effects to buttons for better visual feedback"""
+        """Add hover and press effects for stronger visual feedback."""
         def on_enter(event):
             if button['state'] != 'disabled':
                 button.config(bg=hover_color)
         
         def on_leave(event):
             if button['state'] != 'disabled':
-                button.config(bg=normal_color)
+                button.config(bg=normal_color, relief="raised")
+
+        def on_press(event):
+            if button['state'] != 'disabled':
+                button.config(relief="sunken")
+
+        def on_release(event):
+            if button['state'] != 'disabled':
+                button.config(relief="raised")
         
         button.bind("<Enter>", on_enter)
         button.bind("<Leave>", on_leave)
+        button.bind("<ButtonPress-1>", on_press)
+        button.bind("<ButtonRelease-1>", on_release)
 
     def update_volume_control(self):
         #CoInitialize()  # Initialize COM library

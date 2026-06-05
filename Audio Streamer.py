@@ -152,6 +152,8 @@ class FFMPEGSenderGUI:
         self.root.title("Audio Streamer")
         self.root.geometry("450x400")
         self.root.resizable(False, False)
+        self.primary_button_font = ("Arial", 10, "bold")
+        self.secondary_button_font = ("Arial", 9, "bold")
 
         # Set the icon for the application window and taskbar
         try:
@@ -191,12 +193,14 @@ class FFMPEGSenderGUI:
         # History management buttons in a row with better spacing
         self.delete_selected_button = tk.Button(history_frame, text="Delete Selected", 
                                               command=self.delete_selected_ip, width=16, 
-                                              font=("Arial", 9), relief="raised", bd=1)
+                                              font=self.secondary_button_font)
+        self.style_button(self.delete_selected_button, normal_color="#f0f0f0", hover_color="#e0e0e0", text_color="#111111")
         self.delete_selected_button.place(x=80, y=80)
 
         self.clear_history_button = tk.Button(history_frame, text="Clear All", 
                                             command=self.clear_ip_history, width=16, 
-                                            font=("Arial", 9), relief="raised", bd=1)
+                                            font=self.secondary_button_font)
+        self.style_button(self.clear_history_button, normal_color="#f0f0f0", hover_color="#e0e0e0", text_color="#111111")
         self.clear_history_button.place(x=220, y=80)
 
         # Stream Controls Section
@@ -204,13 +208,13 @@ class FFMPEGSenderGUI:
         controls_frame.place(x=20, y=290, width=410, height=90)
 
         self.start_button = tk.Button(controls_frame, text="Start Stream", command=self.start_stream, 
-                                    width=15, height=2, font=("Arial", 10, "bold"), 
-                                    bg="#4CAF50", fg="white", relief="raised", bd=2)
+                                    width=15, height=2, font=self.primary_button_font)
+        self.style_button(self.start_button, normal_color="#4CAF50", hover_color="#45a049")
         self.start_button.place(x=40, y=10)
 
         self.stop_button = tk.Button(controls_frame, text="Stop Stream", command=self.stop_stream, 
-                                   width=15, height=2, font=("Arial", 10, "bold"), 
-                                   bg="#f44336", fg="white", relief="raised", bd=2)
+                                   width=15, height=2, font=self.primary_button_font)
+        self.style_button(self.stop_button, normal_color="#f44336", hover_color="#d32f2f")
         self.stop_button.place(x=220, y=10)
         self.stop_button.config(state=tk.DISABLED)
 
@@ -221,6 +225,45 @@ class FFMPEGSenderGUI:
 
         # Load IP history on startup
         load_ip_history()
+
+    def style_button(self, button, normal_color, hover_color, text_color="white"):
+        """Apply consistent visual style and interaction feedback to buttons."""
+        button.normal_color = normal_color
+        button.hover_color = hover_color
+        button.config(
+            bg=normal_color,
+            fg=text_color,
+            activebackground=hover_color,
+            activeforeground=text_color,
+            disabledforeground="#111111",
+            relief="raised",
+            bd=2,
+            cursor="hand2"
+        )
+        button.bind("<Enter>", self._on_button_enter)
+        button.bind("<Leave>", self._on_button_leave)
+        button.bind("<ButtonPress-1>", self._on_button_press)
+        button.bind("<ButtonRelease-1>", self._on_button_release)
+
+    def _on_button_enter(self, event):
+        button = event.widget
+        if button["state"] != tk.DISABLED:
+            button.config(bg=button.hover_color)
+
+    def _on_button_leave(self, event):
+        button = event.widget
+        if button["state"] != tk.DISABLED:
+            button.config(bg=button.normal_color, relief="raised")
+
+    def _on_button_press(self, event):
+        button = event.widget
+        if button["state"] != tk.DISABLED:
+            button.config(relief="sunken")
+
+    def _on_button_release(self, event):
+        button = event.widget
+        if button["state"] != tk.DISABLED:
+            button.config(relief="raised")
 
     def update_ip_dropdown(self):
         self.ip_dropdown['values'] = [f"{name}: {ip}" for ip, name in ip_history]
