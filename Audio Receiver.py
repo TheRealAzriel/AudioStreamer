@@ -274,12 +274,16 @@ class FFplayGUI:
         button.bind("<ButtonRelease-1>", on_release)
 
     def update_volume_control(self):
-        #CoInitialize()  # Initialize COM library
+        # Support both legacy and newer pycaw AudioDevice APIs.
         devices = AudioUtilities.GetSpeakers()
+        endpoint_volume = getattr(devices, "EndpointVolume", None)
+        if endpoint_volume is not None:
+            self.volume = endpoint_volume
+            return
+
         interface = devices.Activate(
             IAudioEndpointVolume._iid_, comtypes.CLSCTX_INPROC_SERVER, None)
         self.volume = cast(interface, POINTER(IAudioEndpointVolume))
-        #CoUninitialize()  # Uninitialize COM library
 
     def monitor_audio_device_changes(self):
         CoInitialize()

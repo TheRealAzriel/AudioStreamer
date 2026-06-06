@@ -4,6 +4,7 @@ recordings/
 VBCABLE_Driver_Pack43/
 build/
 dist/
+dist_tmp/
 
 # Build metadata files
 *.spec
