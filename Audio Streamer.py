@@ -150,10 +150,11 @@ class FFMPEGSenderGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Audio Streamer")
-        self.root.geometry("450x400")
+        self.root.geometry("450x445")
         self.root.resizable(False, False)
         self.primary_button_font = ("Arial", 10, "bold")
         self.secondary_button_font = ("Arial", 9, "bold")
+        self.connection_status = "idle"
 
         # Set the icon for the application window and taskbar
         try:
@@ -216,7 +217,20 @@ class FFMPEGSenderGUI:
                                    width=15, height=2, font=self.primary_button_font)
         self.style_button(self.stop_button, normal_color="#f44336", hover_color="#d32f2f")
         self.stop_button.place(x=220, y=10)
-        self.stop_button.config(state=tk.DISABLED)
+        self.set_button_enabled(self.start_button, True)
+        self.set_button_enabled(self.stop_button, False)
+
+        self.status_container = tk.Frame(root, bg="#f0f0f0")
+        self.status_container.place(x=20, y=390, width=410, height=35)
+
+        self.status_canvas = tk.Canvas(self.status_container, width=16, height=16, bg="#f0f0f0", highlightthickness=0)
+        self.status_canvas.place(x=118, y=9)
+        self.status_indicator = self.status_canvas.create_oval(2, 2, 14, 14, fill="#cccccc", outline="#999999")
+
+        self.status_title = tk.Label(self.status_container, text="Status:", font=("Arial", 11, "bold"), bg="#f0f0f0")
+        self.status_title.place(x=145, y=6)
+        self.status_message = tk.Label(self.status_container, text="Idle", font=("Arial", 11, "bold"), fg="#1f4fff", bg="#f0f0f0")
+        self.status_message.place(x=220, y=6)
 
         self.process = None
         self.output_thread = None
@@ -230,12 +244,15 @@ class FFMPEGSenderGUI:
         """Apply consistent visual style and interaction feedback to buttons."""
         button.normal_color = normal_color
         button.hover_color = hover_color
+        button.default_text_color = text_color
+        button.disabled_bg = "#d7d7d7"
+        button.disabled_text = "#666666"
         button.config(
             bg=normal_color,
             fg=text_color,
             activebackground=hover_color,
             activeforeground=text_color,
-            disabledforeground="#111111",
+            disabledforeground=button.disabled_text,
             relief="raised",
             bd=2,
             cursor="hand2"
@@ -244,6 +261,28 @@ class FFMPEGSenderGUI:
         button.bind("<Leave>", self._on_button_leave)
         button.bind("<ButtonPress-1>", self._on_button_press)
         button.bind("<ButtonRelease-1>", self._on_button_release)
+
+    def set_button_enabled(self, button, enabled):
+        button.config(
+            state=tk.NORMAL if enabled else tk.DISABLED,
+            bg=button.normal_color if enabled else button.disabled_bg,
+            fg=button.default_text_color if enabled else button.disabled_text,
+            activebackground=button.hover_color if enabled else button.disabled_bg,
+            relief="raised",
+            cursor="hand2" if enabled else "arrow"
+        )
+
+    def update_status(self, text, color):
+        self.status_message.config(text=text, fg=color)
+        if text == "Idle":
+            self.connection_status = "idle"
+            self.status_canvas.itemconfig(self.status_indicator, fill="#cccccc", outline="#999999")
+        elif "Streaming" in text:
+            self.connection_status = "streaming"
+            self.status_canvas.itemconfig(self.status_indicator, fill="#4CAF50", outline="#2E7D32")
+        elif "Error" in text:
+            self.connection_status = "error"
+            self.status_canvas.itemconfig(self.status_indicator, fill="#f44336", outline="#d32f2f")
 
     def _on_button_enter(self, event):
         button = event.widget
@@ -329,6 +368,7 @@ class FFMPEGSenderGUI:
             socket.inet_aton(ip_address)
         except socket.error:
             logging.error('Invalid IP address format')
+            self.update_status("Error", "#c62828")
             messagebox.showerror("Error", "Invalid IP address format.")
             return
 
@@ -344,6 +384,7 @@ class FFMPEGSenderGUI:
             # Verify that SetPlayBack.exe exists
             if not executable_path.exists():
                 logging.error('SetPlayBack.exe not found at path: %s', executable_path)
+                self.update_status("Error", "#c62828")
                 messagebox.showerror("Error", f"SetPlayBack.exe not found at path:\n{executable_path}")
                 return
 
@@ -359,12 +400,14 @@ class FFMPEGSenderGUI:
                 logging.debug('SetPlayBack.exe executed successfully')
             except subprocess.CalledProcessError as e:
                 logging.error('Failed to execute SetPlayBack.exe: %s', e)
+                self.update_status("Error", "#c62828")
                 messagebox.showerror("Error", "Failed to configure audio environment.")
                 return
 
             # Ensure ffmpeg path exists and resolve any path issues  
             if not ffmpeg_path.exists():
                 logging.error(f"ffmpeg.exe not found at {ffmpeg_path}")
+                self.update_status("Error", "#c62828")
                 messagebox.showerror("Error", f"ffmpeg.exe not found at:\n{ffmpeg_path}")
                 return
                 
@@ -398,8 +441,9 @@ class FFMPEGSenderGUI:
             self.add_ip_to_history(ip_address, name)
             self.update_ip_dropdown()
 
-            self.start_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.NORMAL)
+            self.set_button_enabled(self.start_button, False)
+            self.set_button_enabled(self.stop_button, True)
+            self.update_status("Streaming", "#2e7d32")
             logging.debug('Stream started successfully')
 
     def stop_stream(self):
@@ -421,9 +465,13 @@ class FFMPEGSenderGUI:
                     logging.error(f'Error killing process: {kill_error}')
             finally:
                 self.process = None
-                self.start_button.config(state=tk.NORMAL)
-                self.stop_button.config(state=tk.DISABLED)
+                self.set_button_enabled(self.start_button, True)
+                self.set_button_enabled(self.stop_button, False)
+                self.update_status("Idle", "#1f4fff")
                 logging.debug('Stream stopped successfully')
+
+        else:
+            self.update_status("Idle", "#1f4fff")
 
     def clear_ip_history(self):
         if messagebox.askyesno("Clear History", "Are you sure you want to clear the IP history?"):

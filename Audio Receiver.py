@@ -223,6 +223,7 @@ class FFplayGUI:
         self.stop_play_button.place(x=230, y=390) # Recentered with proper spacing
         self.style_button(self.stop_play_button, normal_color="#f44336", hover_color="#d32f2f", font=self.secondary_button_font)
         self.add_hover(self.stop_play_button, "#d32f2f", "#f44336")
+        self.update_button_states()
         self.update_play_button_state()  # Initial update based on the presence of the recording file
 
         self.ip_label = tk.Label(root, text=f"Local IP: {self.local_ip}")
@@ -238,16 +239,31 @@ class FFplayGUI:
 
     def style_button(self, button, normal_color, hover_color, font):
         """Apply a consistent raised style with readable disabled text."""
+        button.normal_color = normal_color
+        button.hover_color = hover_color
+        button.default_text_color = "white"
+        button.disabled_bg = "#d7d7d7"
+        button.disabled_text = "#666666"
         button.config(
             bg=normal_color,
             fg="white",
             font=font,
             activebackground=hover_color,
             activeforeground="white",
-            disabledforeground="#111111",
+            disabledforeground=button.disabled_text,
             relief="raised",
             bd=2,
             cursor="hand2"
+        )
+
+    def set_button_enabled(self, button, enabled):
+        button.config(
+            state=tk.NORMAL if enabled else tk.DISABLED,
+            bg=button.normal_color if enabled else button.disabled_bg,
+            fg=button.default_text_color if enabled else button.disabled_text,
+            activebackground=button.hover_color if enabled else button.disabled_bg,
+            relief="raised",
+            cursor="hand2" if enabled else "arrow"
         )
 
     def add_hover(self, button, hover_color, normal_color):
@@ -317,8 +333,8 @@ class FFplayGUI:
 
     def start_monitoring(self):
         # Simplified monitoring - no bitrate display needed
-        self.start_button.config(state=tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL)
+        self.set_button_enabled(self.start_button, False)
+        self.set_button_enabled(self.stop_button, True)
         logging.info("Stream monitoring started")
 
     def stop_monitoring(self):
@@ -351,9 +367,9 @@ class FFplayGUI:
             self.is_recording_mode = False
             self.stream_thread = threading.Thread(target=self.run_receiver, daemon=True)
             self.stream_thread.start()
-            self.start_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.NORMAL)
-            self.record_button.config(state=tk.DISABLED)
+            self.set_button_enabled(self.start_button, False)
+            self.set_button_enabled(self.stop_button, True)
+            self.set_button_enabled(self.record_button, False)
             self.update_status("Receiving Stream", "green")
             self.start_monitoring()
             logging.info("TCP stream reception started successfully")
@@ -364,9 +380,9 @@ class FFplayGUI:
             self.is_recording_mode = True
             self.stream_thread = threading.Thread(target=self.run_receiver, daemon=True)
             self.stream_thread.start()
-            self.start_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.NORMAL)
-            self.record_button.config(state=tk.DISABLED)
+            self.set_button_enabled(self.start_button, False)
+            self.set_button_enabled(self.stop_button, True)
+            self.set_button_enabled(self.record_button, False)
             self.update_status("Receiving & Recording", "orange")
             self.start_monitoring()
             logging.info("TCP stream reception with recording started successfully")
@@ -600,23 +616,22 @@ class FFplayGUI:
 
     def update_button_states(self):
         if self.root.winfo_exists():
-            # Update buttons based on process state with explicit colors for better readability
             if self.process is None:
-                self.start_button.config(state=tk.NORMAL, fg="white", font=("Arial", 10, "bold"))
-                self.stop_button.config(state=tk.DISABLED, fg="#111111", disabledforeground="#111111", font=("Arial", 10, "bold"))
-                self.record_button.config(state=tk.NORMAL, fg="white", font=("Arial", 10, "bold"))
+                self.set_button_enabled(self.start_button, True)
+                self.set_button_enabled(self.stop_button, False)
+                self.set_button_enabled(self.record_button, True)
             else:
-                self.start_button.config(state=tk.DISABLED, fg="#111111", disabledforeground="#111111", font=("Arial", 10, "bold"))
-                self.stop_button.config(state=tk.NORMAL, fg="white", font=("Arial", 10, "bold"))
-                self.record_button.config(state=tk.DISABLED, fg="#111111", disabledforeground="#111111", font=("Arial", 10, "bold"))
+                self.set_button_enabled(self.start_button, False)
+                self.set_button_enabled(self.stop_button, True)
+                self.set_button_enabled(self.record_button, False)
 
     def update_play_button_state(self):
         if os.path.exists(self.recording_filename):
-            self.play_button.config(state=tk.NORMAL)
+            self.set_button_enabled(self.play_button, True)
         else:
-            self.play_button.config(state=tk.DISABLED)
+            self.set_button_enabled(self.play_button, False)
         # Always keep stop button disabled when not playing
-        self.stop_play_button.config(state=tk.DISABLED)
+        self.set_button_enabled(self.stop_play_button, False)
 
     def check_playback_status(self):
         # Check if the process is still running
@@ -624,8 +639,8 @@ class FFplayGUI:
             self.play_button.after(1000, self.check_playback_status)
         else:
             # If the process has finished, reset the button states
-            self.play_button.config(state=tk.NORMAL)
-            self.stop_play_button.config(state=tk.DISABLED)
+            self.set_button_enabled(self.play_button, True)
+            self.set_button_enabled(self.stop_play_button, False)
             self.play_process = None
 
     def play_recording(self):
@@ -635,8 +650,8 @@ class FFplayGUI:
                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                                  creationflags=0x08000000 | 0x00000008)
             # Update button states
-            self.play_button.config(state=tk.DISABLED)
-            self.stop_play_button.config(state=tk.NORMAL)
+            self.set_button_enabled(self.play_button, False)
+            self.set_button_enabled(self.stop_play_button, True)
             # Start monitoring playback
             self.play_button.after(1000, self.check_playback_status)
     
@@ -654,8 +669,8 @@ class FFplayGUI:
             finally:
                 self.play_process = None
                 # Update button states
-                self.play_button.config(state=tk.NORMAL)
-                self.stop_play_button.config(state=tk.DISABLED)
+                self.set_button_enabled(self.play_button, True)
+                self.set_button_enabled(self.stop_play_button, False)
 
     def on_closing(self):
         try:
