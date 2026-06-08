@@ -45,8 +45,10 @@ logging.debug('Starting App...')
 ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
 executable_path = script_dir / 'SetPlayBack' / 'SetPlayBack.exe'
 icon_path = script_dir / 'icon' / 'icons8-stream-64.ico'
-history_file = script_dir / 'ip_history.json'
 vb_cable_dir = script_dir / 'VBCABLE_Driver_Pack43'
+
+# Persist user history in AppData so installs under Program Files remain writable.
+history_file = appdata_local_path / 'ip_history.json'
 
 # Log path information for debugging
 logging.debug(f"Base path: {script_dir}")
@@ -79,12 +81,20 @@ ip_history = []
 def load_ip_history():
     global ip_history
     if history_file.exists():
-        with open(history_file, 'r') as file:
-            ip_history = json.load(file)
+        try:
+            with open(history_file, 'r') as file:
+                ip_history = json.load(file)
+        except Exception as e:
+            logging.error('Failed to load IP history: %s', e)
+            ip_history = []
 
 def save_ip_history():
-    with open(history_file, 'w') as file:
-        json.dump(ip_history, file)
+    try:
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(history_file, 'w') as file:
+            json.dump(ip_history, file)
+    except Exception as e:
+        logging.error('Failed to save IP history: %s', e)
 
 # Duplicate _MEIPASS logic removed - already defined above
 

@@ -47,6 +47,23 @@ Build both installers with:
 .\build_installers.ps1 -AppVersion 1.0.0
 ```
 
+Or use one-command target wrappers:
+
+```powershell
+# Build app(s) + make only Streamer installer
+.\make_audio_streamer.ps1 -AppVersion 1.0.3
+
+# Build app(s) + make only Receiver installer
+.\make_audio_receiver.ps1 -AppVersion 1.0.3
+```
+
+Advanced wrapper (shared entry point):
+
+```powershell
+.\make_audio.ps1 -Target streamer -AppVersion 1.0.3
+.\make_audio.ps1 -Target receiver -AppVersion 1.0.3
+```
+
 Notes:
 - This command runs `rebuild_audio_streamer.ps1` first unless `-SkipRebuild` is used.
 - Inno Setup 6 must be installed (`ISCC.exe`).
