@@ -14,12 +14,14 @@ from ctypes import POINTER, cast
 import comtypes
 from comtypes import CoInitialize
 from comtypes import CoUninitialize
+from typing import cast as typing_cast
+from typing import Any
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
-    base_path = Path(sys._MEIPASS)
+    base_path = Path(str(getattr(sys, '_MEIPASS')))
 else:
     base_path = Path(__file__).parent.resolve()
 
@@ -112,9 +114,11 @@ class FFplayGUI:
         #self.volume = None
         self.update_volume_control()  # Initialize volume control
 
-        self.process = None
+        self.process: subprocess.Popen[bytes] | None = None
+        self.audio_process: subprocess.Popen[bytes] | None = None
         self.stream_thread = None
-        self.play_process = None
+        self.play_process: subprocess.Popen[bytes] | None = None
+        self.volume: Any = None
         self.is_muted = False
         self.is_recording_mode = False
         self.running = True  # Flag to control monitoring thread
@@ -291,7 +295,7 @@ class FFplayGUI:
 
     def update_volume_control(self):
         # Support both legacy and newer pycaw AudioDevice APIs.
-        devices = AudioUtilities.GetSpeakers()
+        devices: Any = AudioUtilities.GetSpeakers()
         endpoint_volume = getattr(devices, "EndpointVolume", None)
         if endpoint_volume is not None:
             self.volume = endpoint_volume
@@ -305,7 +309,7 @@ class FFplayGUI:
         CoInitialize()
         try:
             # Get the ID once at the start
-            devices = AudioUtilities.GetSpeakers()
+            devices: Any = AudioUtilities.GetSpeakers()
             current_device = devices.GetId()
             
             while self.running:
@@ -315,7 +319,7 @@ class FFplayGUI:
                 
                 try:
                     # Re-check the ID
-                    new_device = AudioUtilities.GetSpeakers().GetId()
+                    new_device = typing_cast(Any, AudioUtilities.GetSpeakers()).GetId()
                     if new_device != current_device:
                         logging.info(f"Audio device changed to: {new_device}")
                         current_device = new_device
@@ -459,22 +463,24 @@ class FFplayGUI:
                     stderr=subprocess.DEVNULL,
                     creationflags=0x08000000 | 0x00000008  # Combine No Window and Detached Process
                 )
+                proc = typing_cast(subprocess.Popen[bytes], self.process)
                 
                 # Start ffplay to handle the piped audio for speakers
                 self.audio_process = subprocess.Popen(
                     audio_cmd,
-                    stdin=self.process.stdout,
+                    stdin=proc.stdout,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     creationflags=0x08000000 | 0x00000008  # Combine No Window and Detached Process
                 )
                 
                 # Close the stdout pipe in parent to avoid deadlock
-                self.process.stdout.close()
+                if proc.stdout:
+                    proc.stdout.close()
                 
                 logging.info("ffmpeg TCP listener active on port 6005 with recording...")
                 # Wait for ffmpeg process (it will handle both outputs)
-                self.process.wait()
+                proc.wait()
             else:
                 # Standard ffplay process for playback only
                 self.process = subprocess.Popen(
@@ -483,9 +489,10 @@ class FFplayGUI:
                     stderr=subprocess.DEVNULL,
                     creationflags=0x08000000 | 0x00000008  # Combine No Window and Detached Process
                 )
+                proc = typing_cast(subprocess.Popen[bytes], self.process)
                 logging.info("ffplay TCP listener active on port 6005, waiting for connections...")
                 # Wait for process completion
-                self.process.wait()
+                proc.wait()
             
         except Exception as e:
             logging.error(f"Failed to start TCP listener: {str(e)}")
@@ -512,6 +519,7 @@ class FFplayGUI:
 
     def stop_stream(self):
         if self.process:
+            proc = typing_cast(subprocess.Popen[bytes], self.process)
             def terminate_process_thread():
                 try:
                     # Terminate both processes if in recording mode
@@ -528,13 +536,18 @@ class FFplayGUI:
                     
                     # Terminate main process
                     if platform.system() == "Windows":
-                        self.process.terminate()
+                        proc.terminate()
                         try:
-                            self.process.wait(timeout=3)
+                            proc.wait(timeout=3)
                         except subprocess.TimeoutExpired:
-                            self.process.kill()
+                            proc.kill()
                     else:
-                        os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                        killpg = getattr(os, "killpg", None)
+                        getpgid = getattr(os, "getpgid", None)
+                        if killpg and getpgid:
+                            killpg(getpgid(proc.pid), signal.SIGTERM)
+                        else:
+                            proc.terminate()
                     
                     terminate_process("ffprobe")  # Cleanup any ffprobe processes
                 except Exception as e:
@@ -559,7 +572,12 @@ class FFplayGUI:
                 if platform.system() == "Windows":
                     process.terminate()
                 else:
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    killpg = getattr(os, "killpg", None)
+                    getpgid = getattr(os, "getpgid", None)
+                    if killpg and getpgid:
+                        killpg(getpgid(process.pid), signal.SIGTERM)
+                    else:
+                        process.terminate()
             except Exception as e:
                 logging.error(f"Error terminating process: {e}")
 

@@ -18,7 +18,7 @@ from datetime import datetime
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
     # Running in a PyInstaller bundle
-    base_path = Path(sys._MEIPASS)
+    base_path = Path(getattr(sys, '_MEIPASS'))
 else:
     # Running in a normal Python environment
     base_path = Path(__file__).parent.resolve()
@@ -431,11 +431,12 @@ class FFMPEGSenderGUI:
             ]
             logging.debug('Running ffmpeg command: %s', ' '.join(command))
             self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+            proc = self.process
 
-            self.output_thread = threading.Thread(target=self.handle_output, args=(self.process.stdout,))
+            self.output_thread = threading.Thread(target=self.handle_output, args=(proc.stdout,))
             self.output_thread.start()
 
-            self.error_thread = threading.Thread(target=self.handle_error, args=(self.process.stderr,))
+            self.error_thread = threading.Thread(target=self.handle_error, args=(proc.stderr,))
             self.error_thread.start()
 
             self.add_ip_to_history(ip_address, name)
@@ -449,17 +450,19 @@ class FFMPEGSenderGUI:
     def stop_stream(self):
         logging.debug('Stopping stream...')
         if self.process:
+            proc = self.process
             try:
                 # Try to stop FFmpeg gracefully by sending 'q'
-                self.process.stdin.write(b'q')
-                self.process.stdin.flush()
-                self.process.wait(timeout=3)
+                if proc.stdin:
+                    proc.stdin.write(b'q')
+                    proc.stdin.flush()
+                proc.wait(timeout=3)
                 logging.debug('Stream terminated gracefully with q command')
             except Exception as e:
                 logging.warning(f'Graceful stop failed, forcing kill: {e}')
                 try:
-                    self.process.kill()
-                    self.process.wait()  # Wait for the kill to complete
+                    proc.kill()
+                    proc.wait()  # Wait for the kill to complete
                     logging.debug('Stream process killed')
                 except Exception as kill_error:
                     logging.error(f'Error killing process: {kill_error}')
