@@ -21,3 +21,30 @@ Optional flags:
 Build environment lock (current):
 - Python 3.14.2
 - PyInstaller 6.20.0
+
+## Installers
+
+The project now includes two separate installer definitions:
+- `installers/AudioReceiver.iss`: user-level installer (no admin required)
+- `installers/AudioStreamer.iss`: admin installer (VB-CABLE + firewall setup)
+
+Build both installers with:
+
+```powershell
+.\build_installers.ps1 -AppVersion 1.0.0
+```
+
+Notes:
+- This command runs `rebuild_audio_streamer.ps1` first unless `-SkipRebuild` is used.
+- Inno Setup 6 must be installed (`ISCC.exe`).
+- Compiled installer binaries are written to `installer-output/`.
+
+### How installation works for end users
+
+- You distribute the generated setup executables from `installer-output/` (not a zip by default).
+- Users install by double-clicking a setup executable:
+	- `AudioReceiverSetup-<version>.exe`
+	- `AudioStreamerSetup-<version>.exe`
+- The installer copies files to the install location, creates Start Menu entries (searchable in Windows), and optionally desktop shortcuts.
+- Streamer setup also performs one-time system setup (VB-CABLE + firewall rules) with administrator rights.
+- After install, users launch from Start Menu/Desktop like a normal Windows app.
