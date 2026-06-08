@@ -111,6 +111,13 @@ class FFplayGUI:
         except Exception as e:
             logging.error('Failed to set icon: %s', e)
 
+        self.com_initialized = False
+        try:
+            CoInitialize()
+            self.com_initialized = True
+        except Exception as e:
+            logging.error(f"Failed to initialize COM on UI thread: {e}")
+
         #self.volume = None
         self.update_volume_control()  # Initialize volume control
 
@@ -123,6 +130,8 @@ class FFplayGUI:
         self.is_recording_mode = False
         self.running = True  # Flag to control monitoring thread
         self.connection_status = "idle"  # Track connection health
+        self.pending_volume_level: float | None = None
+        self.pending_volume_after: str | None = None
 
         self.recordings_dir = script_dir / 'recordings'
         self.recordings_dir.mkdir(exist_ok=True)
@@ -294,23 +303,89 @@ class FFplayGUI:
         button.bind("<ButtonRelease-1>", on_release)
 
     def update_volume_control(self):
-        # Support both legacy and newer pycaw AudioDevice APIs.
+        # Keep for initialization; operational calls fetch a fresh endpoint each time.
+        self.volume = self._get_volume_interface()
+
+    def _get_volume_interface(self):
+        """Resolve a fresh endpoint-volume interface from the current default output device."""
         devices: Any = AudioUtilities.GetSpeakers()
         endpoint_volume = getattr(devices, "EndpointVolume", None)
         if endpoint_volume is not None:
-            self.volume = endpoint_volume
-            return
+            return endpoint_volume
 
         interface = devices.Activate(
             IAudioEndpointVolume._iid_, comtypes.CLSCTX_INPROC_SERVER, None)
-        self.volume = cast(interface, POINTER(IAudioEndpointVolume))
+        return cast(interface, POINTER(IAudioEndpointVolume))
+
+    def _call_volume_with_refresh(self, method_name, *args):
+        """Call endpoint-volume method and retry once after refreshing device handle."""
+        endpoint = self._get_volume_interface()
+
+        try:
+            method = getattr(endpoint, method_name)
+            return method(*args)
+        except Exception as first_error:
+            logging.warning("Volume call %s failed, refreshing endpoint: %s", method_name, first_error)
+            endpoint = self._get_volume_interface()
+            method = getattr(endpoint, method_name)
+            return method(*args)
+
+    def _apply_mute_ui_state(self):
+        """Keep mute button + slider visuals in sync with OS mute state."""
+        try:
+            self.is_muted = bool(self._call_volume_with_refresh("GetMute"))
+        except Exception as e:
+            logging.error(f"Unable to read mute state: {e}")
+            return
+
+        if self.is_muted:
+            self.mute_button.config(text="🔇", bg="lightcoral")
+            self.volume_slider.config(troughcolor="#ffcccb")
+            self.add_hover(self.mute_button, "#DC143C", "lightcoral")
+            self.update_status("Muted", "red")
+        else:
+            self.mute_button.config(text="🔊", bg="lightgreen")
+            self.volume_slider.config(troughcolor="#d0d0d0")
+            self.add_hover(self.mute_button, "#32CD32", "lightgreen")
+            if self.process is not None:
+                self.update_status("Receiving Stream", "green")
+            else:
+                self.update_status("Idle", "blue")
+
+    def _on_default_device_changed(self):
+        """Refresh endpoint binding and UI state on the Tk/UI thread."""
+        try:
+            self.update_volume_control()
+            self.volume_slider.set(self.get_current_volume())
+            self._apply_mute_ui_state()
+        except Exception as e:
+            logging.error(f"Unable to refresh volume controls after device change: {e}")
+
+    def _get_default_device_id(self):
+        """Return a stable identifier for default output device across pycaw versions."""
+        device = typing_cast(Any, AudioUtilities.GetSpeakers())
+
+        get_id = getattr(device, "GetId", None)
+        if callable(get_id):
+            return get_id()
+
+        for attr in ("id", "device_id"):
+            value = getattr(device, attr, None)
+            if value:
+                return value
+
+        # Fallback to friendly name if no explicit ID is exposed.
+        friendly = getattr(device, "FriendlyName", None)
+        if friendly:
+            return f"friendly:{friendly}"
+
+        return str(device)
 
     def monitor_audio_device_changes(self):
         CoInitialize()
         try:
             # Get the ID once at the start
-            devices: Any = AudioUtilities.GetSpeakers()
-            current_device = devices.GetId()
+            current_device = self._get_default_device_id()
             
             while self.running:
                 # Instead of re-querying the whole object, 
@@ -319,14 +394,11 @@ class FFplayGUI:
                 
                 try:
                     # Re-check the ID
-                    new_device = typing_cast(Any, AudioUtilities.GetSpeakers()).GetId()
+                    new_device = self._get_default_device_id()
                     if new_device != current_device:
                         logging.info(f"Audio device changed to: {new_device}")
                         current_device = new_device
-                        self.update_volume_control()
-                        self.root.after(0, lambda: self.volume_slider.set(self.get_current_volume()))
-                        self.root.after(0, lambda: self.mute_button.config(text="🔊" if not self.is_muted else "🔇", 
-                                               bg="lightgreen" if not self.is_muted else "lightcoral"))
+                        self.root.after(0, self._on_default_device_changed)
                 except Exception as e:
                     # If a device is unplugged, GetSpeakers() might throw an error
                     # We catch it here so the thread doesn't die.
@@ -360,9 +432,11 @@ class FFplayGUI:
         return ip
 
     def get_current_volume(self):
-        if self.volume:
-            current_volume = self.volume.GetMasterVolumeLevelScalar()
+        try:
+            current_volume = self._call_volume_with_refresh("GetMasterVolumeLevelScalar")
             return int(current_volume * 100)
+        except Exception as e:
+            logging.error(f"Unable to read current volume: {e}")
         return 0
 
     def start_stream(self):
@@ -582,8 +656,32 @@ class FFplayGUI:
                 logging.error(f"Error terminating process: {e}")
 
     def set_volume(self, value):
-        volume_level = int(value) / 100.0
-        self.volume.SetMasterVolumeLevelScalar(volume_level, None)
+        try:
+            volume_level = max(0.0, min(1.0, float(value) / 100.0))
+        except Exception:
+            return
+
+        self.pending_volume_level = volume_level
+        if self.pending_volume_after is not None:
+            try:
+                self.root.after_cancel(self.pending_volume_after)
+            except Exception:
+                pass
+
+        # Debounce slider drag writes to avoid COM instability on rapid callbacks.
+        self.pending_volume_after = self.root.after(80, self.flush_pending_volume)
+
+    def flush_pending_volume(self):
+        self.pending_volume_after = None
+        if self.pending_volume_level is None:
+            return
+
+        volume_level = self.pending_volume_level
+        self.pending_volume_level = None
+        try:
+            self._call_volume_with_refresh("SetMasterVolumeLevelScalar", volume_level, None)
+        except Exception as e:
+            logging.error(f"Unable to set volume: {e}")
 
     def on_mouse_wheel(self, event):
         if event.num == 4 or event.delta > 0:
@@ -592,27 +690,16 @@ class FFplayGUI:
             self.volume_slider.set(self.volume_slider.get() - 1)
 
     def mute(self, event=None):
-        if self.volume.GetMute() == 0:
-            self.volume.SetMute(1, None)
-            self.mute_button.config(text="🔇", bg="lightcoral")
-            self.is_muted = True
-            # Change volume slider trough to red when muted
-            self.volume_slider.config(troughcolor="#ffcccb")
-            # Update hover effect for muted state
-            self.add_hover(self.mute_button, "#DC143C", "lightcoral")  # Much more vibrant crimson for hover
-            self.update_status("Muted", "red")
-        else:
-            self.volume.SetMute(0, None)
-            self.mute_button.config(text="🔊", bg="lightgreen")
-            self.is_muted = False
-            # Restore normal volume slider color
-            self.volume_slider.config(troughcolor="#d0d0d0")
-            # Update hover effect for unmuted state  
-            self.add_hover(self.mute_button, "#32CD32", "lightgreen")  # Much more vibrant lime green for hover
-            if self.process is not None:
-                self.update_status("Receiving Stream", "green")
+        try:
+            is_currently_muted = bool(self._call_volume_with_refresh("GetMute"))
+            if not is_currently_muted:
+                self._call_volume_with_refresh("SetMute", 1, None)
             else:
-                self.update_status("Idle", "blue")
+                self._call_volume_with_refresh("SetMute", 0, None)
+
+            self._apply_mute_ui_state()
+        except Exception as e:
+            logging.error(f"Unable to toggle mute: {e}")
 
     def update_status(self, text, color):
         if self.root.winfo_exists():
@@ -704,6 +791,10 @@ class FFplayGUI:
                 
             # Give COM 200ms to uninitialize properly
             time.sleep(0.2) 
+
+            if self.com_initialized:
+                CoUninitialize()
+                self.com_initialized = False
             
         except Exception as e:
             logging.error(f"Error during fast shutdown: {e}")

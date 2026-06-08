@@ -11,7 +11,7 @@ Use the included PowerShell script to rebuild both packaged apps into `dist/Audi
 .\rebuild_audio_streamer.ps1
 ```
 
-The script uses the workspace venv at `H:\Dropbox (Personal)\Audio Streamer Programs\.venv` and rebuilds from the checked-in `.spec` files.
+The script prefers the workspace venv at `H:\Dropbox (Personal)\Audio Streamer Programs\.venv311` and falls back to `H:\Dropbox (Personal)\Audio Streamer Programs\.venv` if needed. It rebuilds from the checked-in `.spec` files.
 It does **not** delete `build/Audio Receiver` or `build/Audio Streamer` by default, and it mirrors runnable `exe + _internal` files from `dist` back into those build folders.
 
 Optional flags:
@@ -19,8 +19,21 @@ Optional flags:
 - `-MirrorToBuild $false` skips the mirror step.
 
 Build environment lock (current):
-- Python 3.14.2
+- Python 3.11.9 preferred for builds
 - PyInstaller 6.20.0
+
+## Dev Runs
+
+For source-based testing, do not use bare `python .\Audio Receiver.py` or `python .\Audio Streamer.py` unless you have already activated the correct environment.
+
+Use the included dev launchers so tests match the intended production-like build environment:
+
+```powershell
+.\run_audio_receiver_dev.ps1
+.\run_audio_streamer_dev.ps1
+```
+
+These scripts always run the apps with `H:\Dropbox (Personal)\Audio Streamer Programs\.venv311\Scripts\python.exe`.
 
 ## Installers
 

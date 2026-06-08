@@ -5,7 +5,17 @@ param(
 
 Set-Location "$PSScriptRoot"
 
-$python = "h:/Dropbox (Personal)/Audio Streamer Programs/.venv/Scripts/python.exe"
+$pythonCandidates = @(
+    "h:/Dropbox (Personal)/Audio Streamer Programs/.venv311/Scripts/python.exe",
+    "h:/Dropbox (Personal)/Audio Streamer Programs/.venv/Scripts/python.exe"
+)
+
+$python = $pythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $python) {
+    throw "No project virtual environment found. Expected .venv311 or .venv under H:\Dropbox (Personal)\Audio Streamer Programs."
+}
+
+Write-Host "Using Python interpreter: $python"
 
 # Keep dist clean for reproducible outputs.
 Remove-Item -Recurse -Force `
