@@ -1,4 +1,5 @@
 # Runtime/generated folders
+__pycache__/
 ffmpeg/bin/
 recordings/
 VBCABLE_Driver_Pack43/
@@ -8,6 +9,7 @@ dist_tmp/
 installer-output/
 
 # Build metadata files
+*.py[cod]
 *.spec
 
 # Local logs
