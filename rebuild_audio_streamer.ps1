@@ -1,53 +1,68 @@
 param(
     [switch]$CleanBuild,
-    [bool]$MirrorToBuild = $true
+    [bool]$MirrorToBuild = $true,
+    [string]$PythonPath
 )
 
-Set-Location "$PSScriptRoot"
-
-$pythonCandidates = @(
-    "h:/Dropbox (Personal)/Audio Streamer Programs/.venv311/Scripts/python.exe",
-    "h:/Dropbox (Personal)/Audio Streamer Programs/.venv/Scripts/python.exe"
-)
-
-$python = $pythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $python) {
-    throw "No project virtual environment found. Expected .venv311 or .venv under H:\Dropbox (Personal)\Audio Streamer Programs."
-}
+$ErrorActionPreference = 'Stop'
+$python = & "$PSScriptRoot\resolve_project_python.ps1" -PythonPath $PythonPath
 
 Write-Host "Using Python interpreter: $python"
 
-# Keep dist clean for reproducible outputs.
-Remove-Item -Recurse -Force `
-    "$PSScriptRoot\dist\Audio Receiver", `
-    "$PSScriptRoot\dist\Audio Streamer" `
-    -ErrorAction SilentlyContinue
+Push-Location -LiteralPath $PSScriptRoot
+try {
+    & $python -m PyInstaller --version
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller is unavailable in $python. Install the documented build dependencies before rebuilding."
+    }
 
-if ($CleanBuild) {
-    Remove-Item -Recurse -Force `
-        "$PSScriptRoot\build\Audio Receiver", `
-        "$PSScriptRoot\build\Audio Streamer" `
-        -ErrorAction SilentlyContinue
-}
+    $appNames = @('Audio Receiver', 'Audio Streamer')
+    foreach ($appName in $appNames) {
+        if (-not (Test-Path -LiteralPath "$PSScriptRoot\$appName.spec" -PathType Leaf)) {
+            throw "Build specification not found: $PSScriptRoot\$appName.spec"
+        }
+    }
 
-& $python -m PyInstaller --noconfirm "$PSScriptRoot\Audio Receiver.spec"
-& $python -m PyInstaller --noconfirm "$PSScriptRoot\Audio Streamer.spec"
+    foreach ($appName in $appNames) {
+        $distDirectory = "$PSScriptRoot\dist\$appName"
+        if (Test-Path -LiteralPath $distDirectory) {
+            Remove-Item -LiteralPath $distDirectory -Recurse -Force
+        }
+        $buildDirectory = "$PSScriptRoot\build\$appName"
+        if ($CleanBuild -and (Test-Path -LiteralPath $buildDirectory)) {
+            Remove-Item -LiteralPath $buildDirectory -Recurse -Force
+        }
+    }
 
-if ($MirrorToBuild) {
-    New-Item -ItemType Directory -Path "$PSScriptRoot\build\Audio Receiver" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$PSScriptRoot\build\Audio Streamer" -Force | Out-Null
+    foreach ($appName in $appNames) {
+        & $python -m PyInstaller --noconfirm "$PSScriptRoot\$appName.spec"
+        if ($LASTEXITCODE -ne 0) {
+            throw "PyInstaller failed for $appName (exit code $LASTEXITCODE)."
+        }
+        if (-not (Test-Path -LiteralPath "$PSScriptRoot\dist\$appName\$appName.exe" -PathType Leaf)) {
+            throw "Expected build output not found: $PSScriptRoot\dist\$appName\$appName.exe"
+        }
+        if (-not (Test-Path -LiteralPath "$PSScriptRoot\dist\$appName\_internal" -PathType Container)) {
+            throw "Expected build output not found: $PSScriptRoot\dist\$appName\_internal"
+        }
+    }
 
-    Remove-Item -Recurse -Force "$PSScriptRoot\build\Audio Receiver\_internal" -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force "$PSScriptRoot\build\Audio Streamer\_internal" -ErrorAction SilentlyContinue
+    if ($MirrorToBuild) {
+        foreach ($appName in $appNames) {
+            $buildDirectory = "$PSScriptRoot\build\$appName"
+            New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
+            if (Test-Path -LiteralPath "$buildDirectory\_internal") {
+                Remove-Item -LiteralPath "$buildDirectory\_internal" -Recurse -Force
+            }
+            Copy-Item -LiteralPath "$PSScriptRoot\dist\$appName\_internal" -Destination "$buildDirectory\_internal" -Recurse -Force
+            Copy-Item -LiteralPath "$PSScriptRoot\dist\$appName\$appName.exe" -Destination "$buildDirectory\$appName.exe" -Force
+        }
+    }
 
-    Copy-Item -Recurse -Force "$PSScriptRoot\dist\Audio Receiver\_internal" "$PSScriptRoot\build\Audio Receiver\_internal"
-    Copy-Item -Recurse -Force "$PSScriptRoot\dist\Audio Streamer\_internal" "$PSScriptRoot\build\Audio Streamer\_internal"
-
-    Copy-Item -Force "$PSScriptRoot\dist\Audio Receiver\Audio Receiver.exe" "$PSScriptRoot\build\Audio Receiver\Audio Receiver.exe"
-    Copy-Item -Force "$PSScriptRoot\dist\Audio Streamer\Audio Streamer.exe" "$PSScriptRoot\build\Audio Streamer\Audio Streamer.exe"
-}
-
-Write-Host "Build complete. Outputs are in: $PSScriptRoot\dist"
-if ($MirrorToBuild) {
-    Write-Host "Mirrored runnable files to: $PSScriptRoot\build"
+    Write-Host "Build complete. Outputs are in: $PSScriptRoot\dist"
+    if ($MirrorToBuild) {
+        Write-Host "Mirrored runnable files to: $PSScriptRoot\build"
+    }
+} finally {
+    Pop-Location
 }

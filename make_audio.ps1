@@ -4,10 +4,12 @@ param(
     [string]$Target,
 
     [string]$AppVersion = "1.0.3",
-    [switch]$SkipRebuild
+    [switch]$SkipRebuild,
+    [string]$PythonPath
 )
 
-Set-Location "$PSScriptRoot"
+$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath $PSScriptRoot
 
 $isccCandidates = @(
     "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
@@ -21,7 +23,7 @@ if (-not $isccPath) {
 }
 
 if (-not $SkipRebuild) {
-    .\rebuild_audio_streamer.ps1
+    & "$PSScriptRoot\rebuild_audio_streamer.ps1" -PythonPath $PythonPath
 }
 
 $tempOutput = Join-Path $env:TEMP "AudioStreamerInstallerOutput"

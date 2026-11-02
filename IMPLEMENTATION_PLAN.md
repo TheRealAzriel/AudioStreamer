@@ -98,8 +98,8 @@ Prepare the approved sources on `cleanup/prepare-master-baseline`, remove tracke
 
 **Branch:** `chore/test-foundation`
 
-**Status:** Implemented on `chore/test-foundation`; all 17 headless tests pass on
-Python 3.11.9 and 3.14.7, including Python 3.11 syntax checks. Awaiting review and merge.
+**Status:** Merged into local and remote `master` at `4351464`. All 17 headless
+tests pass on Python 3.11.9 and 3.14.7, including Python 3.11 syntax checks.
 
 - Add lightweight automated tests that do not open GUI windows or change system audio.
 - Make pure settings, path, validation, discovery-message, and process-state logic importable.
@@ -127,6 +127,8 @@ slice; portable build/dev launcher paths remain in Slice 1A.
 
 **Branch:** `fix/build-portability`
 
+**Status:** Implemented; awaiting review and merge.
+
 - Remove hard-coded `H:\Dropbox (Personal)` interpreter paths.
 - Resolve the repository virtual environment relative to the repository root.
 - Optionally support an explicit interpreter parameter.
@@ -134,6 +136,21 @@ slice; portable build/dev launcher paths remain in Slice 1A.
 - Stop immediately after a failed build.
 - Verify expected output files before mirroring or reporting success.
 - Update README build and development instructions.
+
+Validation:
+- All 35 tests pass on Python 3.11.9, including 18 Windows PowerShell script tests.
+- All project PowerShell scripts parse under Windows PowerShell 5.1.
+- Real Receiver and Streamer packages build with Python 3.11.9 / PyInstaller 6.20.0
+  from a relocated repository copy using the explicit interpreter override.
+- Both refreshed packaged applications show responsive windows. Streaming,
+  recording, audio controls, and installer execution were not exercised.
+- All 946 Receiver and 978 Streamer packaged files match the successful relocated
+  build by SHA-256 in both repository `dist` and mirrored `build` folders.
+- In-place cleanup encountered filesystem locks in generated output folders and
+  stopped explicitly. The lock owner was not identified; no unrelated process was
+  stopped. Relocated build outputs were copied back to restore/refresh packages.
+- PyInstaller reports unresolved `portcls.sys` dependencies for bundled legacy
+  VB-CABLE drivers. Removing/replacing those drivers remains in Phase 4.
 
 ### Slice 1B: Receiver-Owned Process Cleanup
 

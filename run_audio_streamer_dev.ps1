@@ -1,14 +1,20 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
+    [string]$PythonPath,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$AppArgs
 )
 
-Set-Location "$PSScriptRoot"
-
-$python = "h:/Dropbox (Personal)/Audio Streamer Programs/.venv311/Scripts/python.exe"
-if (-not (Test-Path $python)) {
-    throw "Expected Python 3.11 virtualenv not found at $python"
-}
+$ErrorActionPreference = 'Stop'
+$python = & "$PSScriptRoot\resolve_project_python.ps1" -PythonPath $PythonPath
 
 Write-Host "Running Audio Streamer with: $python"
-& $python "$PSScriptRoot\Audio Streamer.py" @AppArgs
+Push-Location -LiteralPath $PSScriptRoot
+try {
+    & $python "$PSScriptRoot\Audio Streamer.py" @AppArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Audio Streamer exited with code $LASTEXITCODE."
+    }
+} finally {
+    Pop-Location
+}

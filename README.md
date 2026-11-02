@@ -8,15 +8,19 @@
 From the repository folder, run the dependency-free, headless test suite:
 
 ```powershell
-py -3.14 -B -m unittest discover -s tests -v
+py -3.11 -B -m unittest discover -s tests -v
 ```
 
 The tests cover existing IPv4 validation, per-user data/history paths, recording
 filenames, connection-status transitions, and Receiver process-dependent controls.
-They also check project Python and spec files for Python 3.11-compatible syntax.
+On Windows they also exercise build/dev scripts in temporary folders with a fake
+builder: interpreter lookup, argument forwarding, build failures, missing outputs,
+mirroring, and installer failure propagation. Windows PowerShell 5.1 is required
+for those script tests; they are skipped on other platforms.
+The suite also checks project Python and spec files for Python 3.11-compatible syntax.
 No application windows open, audio settings change, or FFmpeg processes start.
 The suite uses only Python's standard library; it does not require the app venv.
-Python 3.11+ can run it (`-3.14` selects the currently available local interpreter).
+Python 3.11+ can run it.
 This does not replace source-run or packaged-app smoke tests.
 
 ## Rebuild
@@ -27,8 +31,30 @@ Use the included PowerShell script to rebuild both packaged apps into `dist/Audi
 .\rebuild_audio_streamer.ps1
 ```
 
-The script prefers the workspace venv at `H:\Dropbox (Personal)\Audio Streamer Programs\.venv311` and falls back to `H:\Dropbox (Personal)\Audio Streamer Programs\.venv` if needed. It rebuilds from the checked-in `.spec` files.
-It does **not** delete `build/Audio Receiver` or `build/Audio Streamer` by default, and it mirrors runnable `exe + _internal` files from `dist` back into those build folders.
+Build and dev scripts share interpreter lookup relative to the repository, in this order:
+1. `.venv311` in the parent folder (the existing project environment).
+2. `.venv311` inside the repository.
+3. `.venv` inside the repository.
+4. `.venv` in the parent folder.
+
+They do not fall back to a global `python`. If the first existing environment is
+broken, repair it or explicitly pass `-PythonPath` to select another executable.
+For example:
+
+```powershell
+.\rebuild_audio_streamer.ps1 -PythonPath "H:\Dropbox\Audio Streamer Programs\.venv311\Scripts\python.exe"
+```
+
+The rebuild checks the interpreter, PyInstaller, and both checked-in `.spec` files
+before clearing the two app folders under `dist`. It stops on the first failure
+and requires each build's EXE and `_internal` folder before mirroring or reporting
+success. Both builds must pass before either app is mirrored.
+Close running packaged apps before rebuilding. Cleanup/copy errors (including
+locked files) stop the build explicitly; a failed cleanup can leave a partial
+`dist` folder, while existing mirrored builds remain untouched until mirroring.
+
+It does **not** delete `build/Audio Receiver` or `build/Audio Streamer` by default,
+and it mirrors runnable `exe + _internal` files from `dist` back into those folders.
 
 Optional flags:
 - `-CleanBuild` also wipes `build/Audio Receiver` and `build/Audio Streamer` before rebuilding.
@@ -42,17 +68,18 @@ Build environment lock (current):
 
 For source-based testing, do not use bare `python .\Audio Receiver.py` or `python .\Audio Streamer.py` unless you have already activated the correct environment.
 
-The Python 3.11.9 environment is available at
-`H:\Dropbox\Audio Streamer Programs\.venv311`. Until Slice 1A fixes the old paths
-in the dev launchers, run the apps directly with that interpreter:
+Use the dev launchers; they resolve the same environment as the build script,
+forward application arguments, and report a nonzero application exit:
 
 ```powershell
-& "H:\Dropbox\Audio Streamer Programs\.venv311\Scripts\python.exe" "H:\Dropbox\Audio Streamer Programs\AudioStreamer\Audio Receiver.py"
-& "H:\Dropbox\Audio Streamer Programs\.venv311\Scripts\python.exe" "H:\Dropbox\Audio Streamer Programs\AudioStreamer\Audio Streamer.py"
+.\run_audio_receiver_dev.ps1
+.\run_audio_streamer_dev.ps1
 ```
 
-VS Code should use this same interpreter. An existing terminal's bare `python`
-command can still select a different installation.
+Both launchers accept the same optional `-PythonPath` override. The current
+Python 3.11.9 environment is at `H:\Dropbox\Audio Streamer Programs\.venv311`.
+VS Code should use its `Scripts\python.exe` too; an existing terminal's bare
+`python` command can still select a different installation.
 
 ## Installers
 
@@ -85,6 +112,8 @@ Advanced wrapper (shared entry point):
 
 Notes:
 - This command runs `rebuild_audio_streamer.ps1` first unless `-SkipRebuild` is used.
+- All installer entry points accept `-PythonPath` and forward it to the rebuild.
+- A failed rebuild stops installer creation. `-SkipRebuild` uses existing packages and ignores `-PythonPath`.
 - Inno Setup 6 must be installed (`ISCC.exe`).
 - Compiled installer binaries are written to `installer-output/`.
 
