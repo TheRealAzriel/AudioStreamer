@@ -5,7 +5,6 @@ from tkinter import messagebox, ttk
 import subprocess
 import platform
 import logging
-import socket
 import threading
 import json
 import os
@@ -14,6 +13,7 @@ from ctypes import POINTER, cast
 import comtypes
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
+from audio_common import app_data_directory, is_valid_ip, streamer_status
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
@@ -26,8 +26,7 @@ else:
 
 # Define script path
 script_dir = base_path
-user_home_dir = Path.home()  # This gets the user's home directory
-appdata_local_path = user_home_dir / 'AppData' / 'Local' / 'Audio Streamer'
+appdata_local_path = app_data_directory('Audio Streamer')
 
 # Define log file path within AppData\Local
 log_file_path = appdata_local_path / 'Audio_Streamer.log'
@@ -284,15 +283,10 @@ class FFMPEGSenderGUI:
 
     def update_status(self, text, color):
         self.status_message.config(text=text, fg=color)
-        if text == "Idle":
-            self.connection_status = "idle"
-            self.status_canvas.itemconfig(self.status_indicator, fill="#cccccc", outline="#999999")
-        elif "Streaming" in text:
-            self.connection_status = "streaming"
-            self.status_canvas.itemconfig(self.status_indicator, fill="#4CAF50", outline="#2E7D32")
-        elif "Error" in text:
-            self.connection_status = "error"
-            self.status_canvas.itemconfig(self.status_indicator, fill="#f44336", outline="#d32f2f")
+        status = streamer_status(text)
+        if status is not None:
+            self.connection_status, fill, outline = status
+            self.status_canvas.itemconfig(self.status_indicator, fill=fill, outline=outline)
 
     def _on_button_enter(self, event):
         button = event.widget
@@ -374,9 +368,7 @@ class FFMPEGSenderGUI:
 
         ip_address = self.ip_entry.get()
         name = self.name_entry.get()
-        try:
-            socket.inet_aton(ip_address)
-        except socket.error:
+        if not is_valid_ip(ip_address):
             logging.error('Invalid IP address format')
             self.update_status("Error", "#c62828")
             messagebox.showerror("Error", "Invalid IP address format.")

@@ -18,6 +18,12 @@ from typing import cast as typing_cast
 from typing import Any
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
+from audio_common import (
+    app_data_directory,
+    receiver_button_states,
+    receiver_status,
+    recording_path,
+)
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
@@ -27,8 +33,7 @@ else:
 
 # Define paths
 script_dir = base_path
-user_home_dir = Path.home()  # This gets the user's home directory
-appdata_local_path = user_home_dir / 'AppData' / 'Local' / 'Audio Receiver'
+appdata_local_path = app_data_directory('Audio Receiver')
 
 # Icon path
 icon_path = script_dir / 'icon' / 'icons8-stream-64.ico'
@@ -137,8 +142,7 @@ class FFplayGUI:
         self.recordings_dir.mkdir(exist_ok=True)
 
         # Generate timestamped filename to avoid overwrites
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.recording_filename = self.recordings_dir / f"recording_{timestamp}.mp3"
+        self.recording_filename = recording_path(self.recordings_dir, datetime.now())
 
         self.local_ip = self.get_local_ip()
         
@@ -704,31 +708,17 @@ class FFplayGUI:
     def update_status(self, text, color):
         if self.root.winfo_exists():
             self.status_message.config(text=text, fg=color)
-            # Update health indicator based on status
-            if text == "Idle":
-                self.connection_status = "idle"
-                self.health_canvas.itemconfig(self.health_indicator, fill="#cccccc", outline="#999999")
-            elif "Receiving" in text:
-                self.connection_status = "connected"
-                self.health_canvas.itemconfig(self.health_indicator, fill="#4CAF50", outline="#2E7D32")
-            elif "Error" in text:
-                self.connection_status = "error"
-                self.health_canvas.itemconfig(self.health_indicator, fill="#f44336", outline="#d32f2f")
-            elif "Muted" in text:
-                self.connection_status = "muted"
-                self.health_canvas.itemconfig(self.health_indicator, fill="#ff9800", outline="#f57c00")
-            # No more coordinate math needed here!
+            status = receiver_status(text)
+            if status is not None:
+                self.connection_status, fill, outline = status
+                self.health_canvas.itemconfig(self.health_indicator, fill=fill, outline=outline)
 
     def update_button_states(self):
         if self.root.winfo_exists():
-            if self.process is None:
-                self.set_button_enabled(self.start_button, True)
-                self.set_button_enabled(self.stop_button, False)
-                self.set_button_enabled(self.record_button, True)
-            else:
-                self.set_button_enabled(self.start_button, False)
-                self.set_button_enabled(self.stop_button, True)
-                self.set_button_enabled(self.record_button, False)
+            start, stop, record = receiver_button_states(self.process is not None)
+            self.set_button_enabled(self.start_button, start)
+            self.set_button_enabled(self.stop_button, stop)
+            self.set_button_enabled(self.record_button, record)
 
     def update_play_button_state(self):
         if os.path.exists(self.recording_filename):

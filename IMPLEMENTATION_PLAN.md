@@ -98,10 +98,28 @@ Prepare the approved sources on `cleanup/prepare-master-baseline`, remove tracke
 
 **Branch:** `chore/test-foundation`
 
+**Status:** Implemented on `chore/test-foundation`; all 17 headless tests pass on
+Python 3.11.9 and 3.14.7, including Python 3.11 syntax checks. Awaiting review and merge.
+
 - Add lightweight automated tests that do not open GUI windows or change system audio.
 - Make pure settings, path, validation, discovery-message, and process-state logic importable.
 - Add a single documented validation command.
 - Cover IP validation, settings paths, recording filenames, and process-state transitions.
+
+The initial suite preserves existing behavior through the dependency-free
+`audio_common.py` helpers used by both apps. It covers data/history paths, IPv4
+validation, recording filenames, status transitions, and Receiver controls derived
+from process presence. Discovery-message and settings-JSON tests will be added
+with those features; neither implementation exists yet. Actual child-process
+lifecycle tests belong to Slices 1B and 1C. See README for the validation command.
+
+Python 3.11.9 has been reinstalled and the parent `.venv311` environment repaired
+without replacing its existing packages. Both application modules import
+successfully with that environment, and dependency checks pass. VS Code's
+environment tools report a successful selection but still list the old
+interpreter; manually select the repaired environment if needed. GUI and
+packaged-app smoke tests have not been performed for this
+slice; portable build/dev launcher paths remain in Slice 1A.
 
 ## Phase 1: Reliability Fixes
 

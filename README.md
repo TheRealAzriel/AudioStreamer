@@ -3,6 +3,22 @@
 # and you can combie two workstations into one! One mouse, one keyboard, one set of speakers for two workstations!
 # Have fun and enjoy
 
+## Validation
+
+From the repository folder, run the dependency-free, headless test suite:
+
+```powershell
+py -3.14 -B -m unittest discover -s tests -v
+```
+
+The tests cover existing IPv4 validation, per-user data/history paths, recording
+filenames, connection-status transitions, and Receiver process-dependent controls.
+They also check project Python and spec files for Python 3.11-compatible syntax.
+No application windows open, audio settings change, or FFmpeg processes start.
+The suite uses only Python's standard library; it does not require the app venv.
+Python 3.11+ can run it (`-3.14` selects the currently available local interpreter).
+This does not replace source-run or packaged-app smoke tests.
+
 ## Rebuild
 
 Use the included PowerShell script to rebuild both packaged apps into `dist/Audio Receiver` and `dist/Audio Streamer` with their `_internal` folders:
@@ -26,14 +42,17 @@ Build environment lock (current):
 
 For source-based testing, do not use bare `python .\Audio Receiver.py` or `python .\Audio Streamer.py` unless you have already activated the correct environment.
 
-Use the included dev launchers so tests match the intended production-like build environment:
+The Python 3.11.9 environment is available at
+`H:\Dropbox\Audio Streamer Programs\.venv311`. Until Slice 1A fixes the old paths
+in the dev launchers, run the apps directly with that interpreter:
 
 ```powershell
-.\run_audio_receiver_dev.ps1
-.\run_audio_streamer_dev.ps1
+& "H:\Dropbox\Audio Streamer Programs\.venv311\Scripts\python.exe" "H:\Dropbox\Audio Streamer Programs\AudioStreamer\Audio Receiver.py"
+& "H:\Dropbox\Audio Streamer Programs\.venv311\Scripts\python.exe" "H:\Dropbox\Audio Streamer Programs\AudioStreamer\Audio Streamer.py"
 ```
 
-These scripts always run the apps with `H:\Dropbox (Personal)\Audio Streamer Programs\.venv311\Scripts\python.exe`.
+VS Code should use this same interpreter. An existing terminal's bare `python`
+command can still select a different installation.
 
 ## Installers
 
