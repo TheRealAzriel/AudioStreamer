@@ -5,7 +5,6 @@ from tkinter import messagebox, ttk
 import subprocess
 import platform
 import logging
-import threading
 import json
 import os
 import ctypes
@@ -14,6 +13,7 @@ import comtypes
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
 from audio_common import app_data_directory, is_valid_ip, streamer_status
+from streamer_lifecycle import RECEIVER_DISCONNECTED, StreamerLifecycle
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
@@ -241,9 +241,10 @@ class FFMPEGSenderGUI:
         self.status_message = tk.Label(self.status_container, text="Idle", font=("Arial", 11, "bold"), fg="#1f4fff", bg="#f0f0f0")
         self.status_message.place(x=220, y=6)
 
-        self.process = None
-        self.output_thread = None
-        self.error_thread = None  
+        self.lifecycle = StreamerLifecycle()
+        self.closing = False
+        self.pending_connection = None
+        self.lifecycle_after = self.root.after(100, self.poll_stream)
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # Load IP history on startup
@@ -287,6 +288,38 @@ class FFMPEGSenderGUI:
         if status is not None:
             self.connection_status, fill, outline = status
             self.status_canvas.itemconfig(self.status_indicator, fill=fill, outline=outline)
+
+    def set_stream_state(self, state):
+        labels = {
+            "idle": ("Idle", "#1f4fff"),
+            "connecting": ("Connecting", "#a65f00"),
+            "streaming": ("Streaming", "#2e7d32"),
+            "stopping": ("Stopping", "#a65f00"),
+            "error": ("Error", "#c62828"),
+        }
+        self.update_status(*labels[state])
+        self.set_button_enabled(self.start_button, state in ("idle", "error") and not self.closing)
+        self.set_button_enabled(self.stop_button, state in ("connecting", "streaming") and not self.closing)
+
+    def poll_stream(self):
+        self.lifecycle_after = None
+        for state, error in self.lifecycle.poll():
+            self.set_stream_state(state)
+            if state == "streaming" and self.pending_connection is not None:
+                self.add_ip_to_history(*self.pending_connection)
+                self.update_ip_dropdown()
+                self.pending_connection = None
+            if state in ("idle", "error"):
+                self.pending_connection = None
+            if error and not self.closing:
+                if error == RECEIVER_DISCONNECTED:
+                    messagebox.showinfo("Receiver Disconnected", error)
+                else:
+                    messagebox.showerror("Streaming Failed", error)
+        if self.closing and self.lifecycle.state in ("idle", "error"):
+            self.root.destroy()
+            return
+        self.lifecycle_after = self.root.after(100, self.poll_stream)
 
     def _on_button_enter(self, event):
         button = event.widget
@@ -335,16 +368,6 @@ class FFMPEGSenderGUI:
             logging.error('Error checking for audio device: %s', e)
             return False
 
-    def handle_output(self, pipe):
-        for line in iter(pipe.readline, b''):
-            logging.debug('[FFmpeg stdout] %s', line.decode().strip())
-        pipe.close()
-
-    def handle_error(self, pipe):
-        for line in iter(pipe.readline, b''):
-            logging.error('[FFmpeg stderr] %s', line.decode().strip())
-        pipe.close()
-
     def add_ip_to_history(self, ip, name):
         # Check for an existing entry and update it if found
         for index, (existing_ip, existing_name) in enumerate(ip_history):
@@ -362,9 +385,8 @@ class FFMPEGSenderGUI:
     def start_stream(self):
         logging.debug('Starting stream...')
 
-        # Check if already streaming and stop gracefully
-        if self.process:
-            self.stop_stream()
+        if self.closing or self.lifecycle.state not in ("idle", "error"):
+            return
 
         ip_address = self.ip_entry.get()
         name = self.name_entry.get()
@@ -382,7 +404,7 @@ class FFMPEGSenderGUI:
             else:
                 return
 
-        if self.process is None:
+        if self.lifecycle.state in ("idle", "error"):
             # Verify that SetPlayBack.exe exists
             if not executable_path.exists():
                 logging.error('SetPlayBack.exe not found at path: %s', executable_path)
@@ -400,7 +422,7 @@ class FFMPEGSenderGUI:
                 setplayback_exe = str(executable_path.resolve())
                 subprocess.run([setplayback_exe], cwd=playback_work_dir, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 logging.debug('SetPlayBack.exe executed successfully')
-            except subprocess.CalledProcessError as e:
+            except (OSError, subprocess.SubprocessError) as e:
                 logging.error('Failed to execute SetPlayBack.exe: %s', e)
                 self.update_status("Error", "#c62828")
                 messagebox.showerror("Error", "Failed to configure audio environment.")
@@ -421,6 +443,7 @@ class FFMPEGSenderGUI:
             command = [
                 ffmpeg_exe,  # Use resolved absolute path
                 '-hide_banner', '-loglevel', 'error',  # Clean logs
+                '-progress', 'pipe:1', '-nostats',
                 '-f', 'dshow',
                 '-audio_buffer_size', '50',           # Small buffer for low latency
                 '-i', f'audio={audio_device}',
@@ -432,51 +455,15 @@ class FFMPEGSenderGUI:
                 f'tcp://{ip_address}:6005?timeout=5000000&tcp_nodelay=1'
             ]
             logging.debug('Running ffmpeg command: %s', ' '.join(command))
-            self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
-            proc = self.process
-
-            self.output_thread = threading.Thread(target=self.handle_output, args=(proc.stdout,))
-            self.output_thread.start()
-
-            self.error_thread = threading.Thread(target=self.handle_error, args=(proc.stderr,))
-            self.error_thread.start()
-
-            self.add_ip_to_history(ip_address, name)
-            self.update_ip_dropdown()
-
-            self.set_button_enabled(self.start_button, False)
-            self.set_button_enabled(self.stop_button, True)
-            self.update_status("Streaming", "#2e7d32")
-            logging.debug('Stream started successfully')
+            self.pending_connection = (ip_address, name)
+            self.lifecycle.start(command)
+            self.set_stream_state("connecting")
+            logging.debug('Waiting for FFmpeg streaming progress')
 
     def stop_stream(self):
         logging.debug('Stopping stream...')
-        if self.process:
-            proc = self.process
-            try:
-                # Try to stop FFmpeg gracefully by sending 'q'
-                if proc.stdin:
-                    proc.stdin.write(b'q')
-                    proc.stdin.flush()
-                proc.wait(timeout=3)
-                logging.debug('Stream terminated gracefully with q command')
-            except Exception as e:
-                logging.warning(f'Graceful stop failed, forcing kill: {e}')
-                try:
-                    proc.kill()
-                    proc.wait()  # Wait for the kill to complete
-                    logging.debug('Stream process killed')
-                except Exception as kill_error:
-                    logging.error(f'Error killing process: {kill_error}')
-            finally:
-                self.process = None
-                self.set_button_enabled(self.start_button, True)
-                self.set_button_enabled(self.stop_button, False)
-                self.update_status("Idle", "#1f4fff")
-                logging.debug('Stream stopped successfully')
-
-        else:
-            self.update_status("Idle", "#1f4fff")
+        self.lifecycle.stop()
+        self.set_stream_state(self.lifecycle.state)
 
     def clear_ip_history(self):
         if messagebox.askyesno("Clear History", "Are you sure you want to clear the IP history?"):
@@ -533,8 +520,13 @@ class FFMPEGSenderGUI:
 
     def on_closing(self):
         logging.debug('Closing application')
+        self.closing = True
         self.stop_stream()
-        self.root.destroy()
+        if self.lifecycle.state == "idle":
+            if self.lifecycle_after is not None:
+                self.root.after_cancel(self.lifecycle_after)
+                self.lifecycle_after = None
+            self.root.destroy()
 
 if __name__ == "__main__":
     logging.debug('Starting Audio Streamer application')

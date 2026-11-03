@@ -13,12 +13,15 @@ py -3.11 -B -m unittest discover -s tests -v
 
 The tests cover existing IPv4 validation, per-user data/history paths, recording
 filenames, connection-status transitions, and Receiver process-dependent controls.
+Streamer lifecycle tests run isolated Python child processes to cover startup,
+later exits, graceful/forced stops, and restarts, with mocked GUI wiring.
 On Windows they also exercise build/dev scripts in temporary folders with a fake
 builder: interpreter lookup, argument forwarding, build failures, missing outputs,
 mirroring, and installer failure propagation. Windows PowerShell 5.1 is required
 for those script tests; they are skipped on other platforms.
 The suite also checks project Python and spec files for Python 3.11-compatible syntax.
-No application windows open, audio settings change, or FFmpeg processes start.
+No application windows open, audio settings change, or FFmpeg processes start
+in the automated suite.
 The suite uses only Python's standard library; it does not require the app venv.
 Python 3.11+ can run it.
 This does not replace source-run or packaged-app smoke tests.
@@ -80,6 +83,24 @@ Both launchers accept the same optional `-PythonPath` override. The current
 Python 3.11.9 environment is at `H:\Dropbox\Audio Streamer Programs\.venv311`.
 VS Code should use its `Scripts\python.exe` too; an existing terminal's bare
 `python` command can still select a different installation.
+
+### Streamer status and shutdown
+
+- **Connecting** means FFmpeg has been requested but streaming is not confirmed.
+- **Streaming** appears only after FFmpeg reports positive output-time progress.
+  This confirms sender output, not that the Receiver's speakers are playing.
+- **Stopping** disables Start/Stop while the owned FFmpeg process shuts down.
+  It first receives `q`; if it does not exit within three seconds, it is killed
+  and reaped with another bounded wait. Output-reader threads are joined.
+- Unexpected exits show **Error**, restore Start, and display the exit code and
+  recent FFmpeg diagnostics when available. Even an unrequested zero-code exit
+  is treated as an ended stream, not a successful user stop.
+- A connection reset after confirmed streaming instead shows an informational
+  **Receiver Disconnected** notice with reconnect instructions. Start is restored;
+  the status remains Error until restarted. Technical details stay in the log.
+  Receiver Stop and a lost connection cannot be distinguished from the sender.
+- A connection is saved only after streaming is confirmed. Stop and window-close
+  do not block Tk while FFmpeg is shutting down; the window closes after cleanup.
 
 ## Installers
 

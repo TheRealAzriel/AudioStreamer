@@ -35,6 +35,10 @@ def receiver_status(text: str) -> tuple[str, str, str] | None:
 def streamer_status(text: str) -> tuple[str, str, str] | None:
     if text == "Idle":
         return "idle", "#cccccc", "#999999"
+    if text == "Connecting":
+        return "connecting", "#ff9800", "#f57c00"
+    if text == "Stopping":
+        return "stopping", "#ff9800", "#f57c00"
     if "Streaming" in text:
         return "streaming", "#4CAF50", "#2E7D32"
     if "Error" in text:

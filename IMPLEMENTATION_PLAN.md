@@ -127,7 +127,7 @@ slice; portable build/dev launcher paths remain in Slice 1A.
 
 **Branch:** `fix/build-portability`
 
-**Status:** Implemented; awaiting review and merge.
+**Status:** Merged into local and remote `master` at `54068f1`.
 
 - Remove hard-coded `H:\Dropbox (Personal)` interpreter paths.
 - Resolve the repository virtual environment relative to the repository root.
@@ -167,12 +167,47 @@ Validation:
 
 **Branch:** `fix/streamer-process-lifecycle`
 
+**Status:** Implemented; awaiting review and merge. Slice 1B remains pending.
+
 - Model `idle`, `connecting`, `streaming`, `stopping`, and `error` states.
 - Detect immediate and later FFmpeg failures.
 - Do not show Streaming merely because `Popen` returned.
 - Restore controls and show an actionable message after unexpected exit.
 - Distinguish normal user-requested stops from failures.
 - Ensure output-reader threads stop cleanly.
+- After confirmed streaming, report FFmpeg connection-reset exits as a friendly
+  "Receiver disconnected" information notice with reconnect instructions, rather
+  than a technical failure dialog. Preserve the exit code and diagnostics in the
+  log. A reset cannot distinguish intentional Receiver stop from a dropped link.
+  Keep startup failures and other FFmpeg errors explicit.
+
+Validation:
+- All 63 tests pass on Python 3.11.9, including 28 new lifecycle/UI wiring tests.
+- Tests use real isolated Python children for immediate/later exits, nonblocking
+  graceful and forced stops, repeated restarts, output decoding, and thread cleanup.
+- An unrelated running child is verified to survive a Streamer stop.
+- The source GUI was exercised with real FFmpeg synthetic silence to a null
+  output: Connecting -> Streaming -> Stopping -> Idle, restored controls, and
+  cancelled polling on close. No SetPlayBack, audio-device changes, or Receiver
+  network connection was used.
+- Streaming is confirmed by positive FFmpeg output-time progress, not process
+  creation. This does not independently confirm playback at the Receiver.
+- Python 3.11 syntax/static checks pass. Pylance reports no diagnostics in the
+  new lifecycle module or test file; its GUI diagnostics still report the known
+  unresolved audio imports for the editor-selected environment.
+- Both apps were rebuilt for this slice on November 3, 2026 using a relocated
+  build because in-place output cleanup hit filesystem locks. The repository
+  `dist` and mirrored `build` packages were refreshed and all 946 Receiver /
+  978 Streamer files verified against that build by SHA-256. The Streamer EXE
+  contains `streamer_lifecycle`, and both packaged windows launch responsively.
+  Two-machine user testing confirmed VB-CABLE capture and playback after allowing
+  FFplay through the Receiver firewall. Stopping Receiver produced FFmpeg reset
+  code -10054 (unsigned 4294957242), prompting the friendly disconnect update.
+  That update still requires a repeat two-machine test. Installer executables
+  have not been rebuilt for this slice.
+- Both test packages were rebuilt again after the friendly disconnect update;
+  package hashes and responsive windows were verified. The classifier extracted
+  from the compiled Streamer returns the new reconnect message for code 4294957242.
 
 ## Phase 2: Settings and Native Menus
 

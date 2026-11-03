@@ -94,6 +94,8 @@ class StatusTests(unittest.TestCase):
     def test_streamer_status_states_and_indicator_colors(self):
         for text, expected in (
             ("Idle", ("idle", "#cccccc", "#999999")),
+            ("Connecting", ("connecting", "#ff9800", "#f57c00")),
+            ("Stopping", ("stopping", "#ff9800", "#f57c00")),
             ("Streaming", ("streaming", "#4CAF50", "#2E7D32")),
             ("Error", ("error", "#f44336", "#d32f2f")),
         ):
@@ -102,7 +104,7 @@ class StatusTests(unittest.TestCase):
 
     def test_unknown_status_leaves_indicator_unchanged(self):
         for get_status in (receiver_status, streamer_status):
-            for text in ("", "Connecting", "Stopping", "idle"):
+            for text in ("", "Unrecognized", "idle"):
                 with self.subTest(app=get_status.__name__, text=text):
                     self.assertIsNone(get_status(text))
 
