@@ -113,16 +113,27 @@ Settings live outside the application/install folder:
 
 If `LOCALAPPDATA` is unavailable, the path falls back to
 `%USERPROFILE%\AppData\Local`. The same location is used for each app's log.
+Logs are stored in a `logs` subfolder with an application-named `.log` file:
+`%LOCALAPPDATA%\Audio Receiver\logs\Audio_Receiver.log` and
+`%LOCALAPPDATA%\Audio Streamer\logs\Audio_Streamer.log`. Existing root-level
+log files are left untouched.
 Missing settings use in-memory defaults; a file is created on the first save.
-Receiver currently only loads the foundation; its menu and recording-folder
-preferences are reserved for Slice 2B. Recording behavior has not changed.
+The Receiver's File, Options, and Help menus include recording-folder selection,
+open-folder actions, Receiver name/reset preferences, and About information.
+Recordings default to `%USERPROFILE%\Music\Audio Receiver Recordings` when the
+Music folder exists, otherwise `%LOCALAPPDATA%\Audio Receiver\Recordings`.
+The folder is checked for writability before recording, and each recording start
+uses a fresh timestamped MP3 filename. Existing schema-version-1 settings remain
+valid; Receiver preferences are added without changing the schema version.
 
 The versioned JSON format is:
 
 ```json
 {
   "schema_version": 1,
-  "saved_receivers": [["192.168.1.10", "Office Receiver"]]
+  "saved_receivers": [["192.168.1.10", "Office Receiver"]],
+  "receiver_name": "",
+  "recording_folder": null
 }
 ```
 

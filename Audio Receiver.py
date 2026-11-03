@@ -10,6 +10,7 @@ import threading
 import platform
 import signal
 import socket
+from tkinter import filedialog, simpledialog
 from ctypes import POINTER, cast
 import comtypes
 from comtypes import CoInitialize
@@ -18,12 +19,20 @@ from typing import cast as typing_cast
 from typing import Any
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
-from app_settings import APP_VERSION, SettingsError, load_settings
+from app_settings import (
+    APP_VERSION,
+    AppSettings,
+    SettingsError,
+    default_recording_directory,
+    ensure_recording_directory_writable,
+    load_settings,
+    save_settings,
+)
 from audio_common import (
     app_data_directory,
+    next_recording_path,
     receiver_button_states,
     receiver_status,
-    recording_path,
 )
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
@@ -39,8 +48,8 @@ appdata_local_path = app_data_directory('Audio Receiver')
 # Icon path
 icon_path = script_dir / 'icon' / 'icons8-stream-64.ico'
 
-# Define log file path within AppData\Local
-log_file_path = appdata_local_path / 'Audio_Receiver.log'
+# Keep logs grouped separately from settings and other app data.
+log_file_path = appdata_local_path / 'logs' / 'Audio_Receiver.log'
 
 # Ensure the log file directory exists
 log_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,11 +154,13 @@ class FFplayGUI:
         self.pending_volume_level: float | None = None
         self.pending_volume_after: str | None = None
 
-        self.recordings_dir = script_dir / 'recordings'
-        self.recordings_dir.mkdir(exist_ok=True)
-
-        # Generate timestamped filename to avoid overwrites
-        self.recording_filename = recording_path(self.recordings_dir, datetime.now())
+        self.recordings_dir = (
+            Path(self.settings.recording_folder)
+            if self.settings is not None and self.settings.recording_folder
+            else default_recording_directory()
+        )
+        self.recording_filename = next_recording_path(self.recordings_dir, datetime.now())
+        self.create_menu()
 
         self.local_ip = self.get_local_ip()
         
@@ -466,6 +477,13 @@ class FFplayGUI:
     def start_recording(self):
         logging.info("Starting TCP stream reception with recording...")
         if self.process is None:
+            try:
+                ensure_recording_directory_writable(self.recordings_dir)
+            except SettingsError as exc:
+                logging.exception("Unable to start recording")
+                messagebox.showerror("Recording Error", str(exc))
+                return
+            self.recording_filename = next_recording_path(self.recordings_dir, datetime.now())
             self.is_recording_mode = True
             self.stream_thread = threading.Thread(target=self.run_receiver, daemon=True)
             self.stream_thread.start()
@@ -475,6 +493,135 @@ class FFplayGUI:
             self.update_status("Receiving & Recording", "orange")
             self.start_monitoring()
             logging.info("TCP stream reception with recording started successfully")
+
+    def create_menu(self):
+        menu_bar = tk.Menu(self.root)
+        file_menu = tk.Menu(menu_bar, tearoff=False)
+        file_menu.add_command(label="Choose Recording Folder...", command=self.choose_recording_folder)
+        file_menu.add_command(label="Open Recording Folder", command=self.open_recording_folder)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.on_closing)
+        menu_bar.add_cascade(label="File", menu=file_menu)
+
+        options_menu = tk.Menu(menu_bar, tearoff=False)
+        options_menu.add_command(label="Receiver Name...", command=self.change_receiver_name)
+        options_menu.add_command(label="Reset Settings", command=self.reset_settings)
+        menu_bar.add_cascade(label="Options", menu=options_menu)
+
+        help_menu = tk.Menu(menu_bar, tearoff=False)
+        help_menu.add_command(label="Open Log Folder", command=self.open_log_folder)
+        help_menu.add_command(label="About Audio Receiver", command=self.show_about)
+        menu_bar.add_cascade(label="Help", menu=help_menu)
+        self.root.config(menu=menu_bar)
+
+    def save_preferences(self, settings):
+        if self.settings is None:
+            messagebox.showerror(
+                "Settings Error",
+                "Receiver settings could not be loaded. Repair the settings file and restart the app.",
+            )
+            return False
+        try:
+            save_settings("Audio Receiver", settings)
+        except SettingsError as exc:
+            logging.exception("Unable to save Receiver preferences")
+            messagebox.showerror("Settings Error", str(exc))
+            return False
+        self.settings = settings
+        self.recordings_dir = (
+            Path(settings.recording_folder)
+            if settings.recording_folder
+            else default_recording_directory()
+        )
+        return True
+
+    def choose_recording_folder(self):
+        folder = filedialog.askdirectory(
+            parent=self.root,
+            title="Choose Recording Folder",
+            initialdir=str(
+                self.recordings_dir if self.recordings_dir.is_dir() else Path.home()
+            ),
+            mustexist=True,
+        )
+        if not folder or self.settings is None:
+            if folder:
+                self.save_preferences(self.settings)
+            return
+        directory = Path(folder)
+        try:
+            ensure_recording_directory_writable(directory)
+        except SettingsError as exc:
+            logging.exception("Selected recording folder is not writable")
+            messagebox.showerror("Recording Folder Error", str(exc))
+            return
+        self.save_preferences(
+            AppSettings(
+                self.settings.saved_receivers,
+                self.settings.receiver_name,
+                str(directory),
+            )
+        )
+
+    def open_recording_folder(self):
+        try:
+            self.recordings_dir.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(self.recordings_dir))
+        except OSError as exc:
+            logging.exception("Unable to open recording folder")
+            messagebox.showerror("Open Folder Error", f"Unable to open {self.recordings_dir}: {exc}")
+
+    def change_receiver_name(self):
+        if self.settings is None:
+            self.save_preferences(self.settings)
+            return
+        name = simpledialog.askstring(
+            "Receiver Name",
+            "Name this Receiver:",
+            initialvalue=self.settings.receiver_name or socket.gethostname(),
+            parent=self.root,
+        )
+        if name is None:
+            return
+        name = name.strip()
+        if len(name) > 64:
+            messagebox.showerror("Receiver Name Error", "Receiver name must be at most 64 characters.")
+            return
+        self.save_preferences(
+            AppSettings(
+                self.settings.saved_receivers,
+                name,
+                self.settings.recording_folder,
+            )
+        )
+
+    def reset_settings(self):
+        if not messagebox.askyesno(
+            "Reset Settings", "Reset the Receiver name and recording folder to their defaults?"
+        ):
+            return
+        if self.save_preferences(AppSettings()):
+            messagebox.showinfo("Reset Settings", "Receiver settings have been reset.")
+
+    def open_log_folder(self):
+        try:
+            os.startfile(str(log_file_path.parent))
+        except OSError as exc:
+            logging.exception("Unable to open log folder")
+            messagebox.showerror(
+                "Open Folder Error", f"Unable to open {log_file_path.parent}: {exc}"
+            )
+
+    def show_about(self):
+        messagebox.showinfo(
+            "About Audio Receiver",
+            f"Audio Receiver {APP_VERSION}\n"
+            "Receives audio from Audio Streamer over the local network and can record MP3 files.\n\n"
+            f"Recording folder: {self.recordings_dir}\n"
+            f"Settings file: {app_data_directory('Audio Receiver') / 'settings.json'}\n"
+            f"Log folder: {log_file_path.parent}\n\n"
+            "Third-party credits: FFmpeg (ffmpeg.org); Icons8 (icons8.com).",
+        )
 
     def run_receiver(self):
         if self.is_recording_mode:

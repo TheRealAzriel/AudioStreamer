@@ -15,6 +15,15 @@ def recording_path(directory: Path, timestamp: datetime) -> Path:
     return directory / f"recording_{timestamp:%Y%m%d_%H%M%S}.mp3"
 
 
+def next_recording_path(directory: Path, timestamp: datetime) -> Path:
+    path = recording_path(directory, timestamp)
+    suffix = 2
+    while path.exists():
+        path = directory / f"recording_{timestamp:%Y%m%d_%H%M%S}_{suffix}.mp3"
+        suffix += 1
+    return path
+
+
 def is_valid_ip(address: str) -> bool:
     # Preserve inet_aton's existing acceptance of abbreviated IPv4 addresses.
     try:

@@ -11,6 +11,7 @@ from unittest.mock import patch
 from audio_common import (
     app_data_directory,
     is_valid_ip,
+    next_recording_path,
     receiver_button_states,
     receiver_status,
     recording_path,
@@ -71,6 +72,20 @@ class PathTests(unittest.TestCase):
             recording_path(directory, datetime(2026, 1, 2, 3, 4, 5, 123456)),
             recording_path(directory, datetime(2026, 1, 2, 3, 4, 5, 999999)),
         )
+
+    def test_new_recording_path_avoids_overwriting_same_second_recordings(self):
+        timestamp = datetime(2026, 1, 2, 3, 4, 5)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            first = recording_path(directory, timestamp)
+            first.touch()
+            second = next_recording_path(directory, timestamp)
+            self.assertEqual(second, directory / "recording_20260102_030405_2.mp3")
+            second.touch()
+            self.assertEqual(
+                next_recording_path(directory, timestamp),
+                directory / "recording_20260102_030405_3.mp3",
+            )
 
 
 class IPValidationTests(unittest.TestCase):

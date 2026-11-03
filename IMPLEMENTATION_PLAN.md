@@ -273,9 +273,14 @@ Help
 - Default to `%USERPROFILE%\Music\Audio Receiver Recordings` when available.
 - Fall back to `%LOCALAPPDATA%\Audio Receiver\Recordings`.
 - Use a standard folder picker and remember the selected folder.
-- Validate writability before recording.
-- Generate a new timestamped filename each time recording starts.
-- Include version, purpose, paths, and required attribution in About.
+- Validate writability before recording; choose a fresh, non-overwriting
+  timestamped filename each time recording starts.
+- Keep existing schema-version-1 settings valid while persisting the Receiver
+  name and recording folder.
+- Store Receiver logs in `%LOCALAPPDATA%\Audio Receiver\logs\Audio_Receiver.log`;
+  leave any existing root-level log untouched.
+- Include version, purpose, settings/recording/log paths, and FFmpeg/Icons8
+  credits in About.
 
 ### Slice 2C: Streamer Menu
 
@@ -303,6 +308,8 @@ Help
 - Preserve prominent Start and Stop controls.
 - Preserve manual IP entry and saved connections.
 - Keep menu actions and main-window controls synchronized.
+- Store Streamer logs in `%LOCALAPPDATA%\Audio Streamer\logs\Audio_Streamer.log`;
+  leave any existing root-level log untouched.
 
 ## Phase 3: Hybrid Receiver Discovery
 

@@ -18,6 +18,8 @@ class SettingsError(Exception):
 @dataclass
 class AppSettings:
     saved_receivers: list[tuple[str, str]] = field(default_factory=list)
+    receiver_name: str = ""
+    recording_folder: str | None = None
 
 
 def validate_receivers(value: object) -> list[tuple[str, str]]:
@@ -36,18 +38,54 @@ def validate_receivers(value: object) -> list[tuple[str, str]]:
     return receivers
 
 
+def validate_receiver_name(value: object) -> str:
+    if not isinstance(value, str) or len(value) > 64:
+        raise SettingsError("Receiver name must be text with at most 64 characters.")
+    return value
+
+
+def validate_recording_folder(value: object) -> str | None:
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        raise SettingsError("Recording folder must be a non-empty path or null.")
+    return value
+
+
 def decode_settings(value: object) -> AppSettings:
     if not isinstance(value, dict):
         raise SettingsError("Settings must be a JSON object.")
     if type(value.get("schema_version")) is not int or value["schema_version"] != SETTINGS_VERSION:
         raise SettingsError("Unsupported settings schema version.")
-    if set(value) != {"schema_version", "saved_receivers"}:
+    required = {"schema_version", "saved_receivers"}
+    optional = {"receiver_name", "recording_folder"}
+    if not required.issubset(value) or set(value) - required - optional:
         raise SettingsError("Settings contain missing or unsupported fields.")
-    return AppSettings(validate_receivers(value["saved_receivers"]))
+    return AppSettings(
+        validate_receivers(value["saved_receivers"]),
+        validate_receiver_name(value.get("receiver_name", "")),
+        validate_recording_folder(value.get("recording_folder")),
+    )
 
 
 def settings_path(app_name: str) -> Path:
     return app_data_directory(app_name) / "settings.json"
+
+
+def default_recording_directory() -> Path:
+    music_directory = Path.home() / "Music"
+    if music_directory.is_dir():
+        return music_directory / "Audio Receiver Recordings"
+    return app_data_directory("Audio Receiver") / "Recordings"
+
+
+def ensure_recording_directory_writable(directory: Path) -> None:
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=directory, prefix=".write-test-", delete=True
+        ):
+            pass
+    except OSError as exc:
+        raise SettingsError(f"Recording folder is not writable: {directory}") from exc
 
 
 def _read_json(path: Path) -> object:
@@ -61,6 +99,8 @@ def save_settings(app_name: str, settings: AppSettings) -> None:
     document = {
         "schema_version": SETTINGS_VERSION,
         "saved_receivers": validate_receivers(settings.saved_receivers),
+        "receiver_name": validate_receiver_name(settings.receiver_name),
+        "recording_folder": validate_recording_folder(settings.recording_folder),
     }
     path = settings_path(app_name)
     temporary_path = None

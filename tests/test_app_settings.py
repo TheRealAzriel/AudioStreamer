@@ -9,7 +9,8 @@ from unittest.mock import Mock, patch
 
 from app_settings import (
     APP_VERSION, SETTINGS_VERSION, AppSettings, SettingsError,
-    decode_settings, load_settings, save_settings, settings_path,
+    decode_settings, default_recording_directory, ensure_recording_directory_writable,
+    load_settings, save_settings, settings_path,
 )
 
 
@@ -49,7 +50,7 @@ class SettingsTests(unittest.TestCase):
             json.loads(settings_path(self.app).read_text(encoding="utf-8")),
             {"schema_version": SETTINGS_VERSION, "saved_receivers": [
                 ["127.1", "Desk: Speakers"], ["192.168.1.5", "B\u00fcro"],
-            ]},
+            ], "receiver_name": "", "recording_folder": None},
         )
 
     def test_invalid_documents_are_not_silently_accepted(self):
@@ -63,9 +64,49 @@ class SettingsTests(unittest.TestCase):
             {"schema_version": 1, "saved_receivers": [["bad address", "Name"]]},
             {"schema_version": 1, "saved_receivers": [["127.0.0.1", 42]]},
             {"schema_version": 1, "saved_receivers": [["127.0.0.1", "Name", "Extra"]]},
+            {"schema_version": 1, "saved_receivers": [], "receiver_name": 42},
+            {"schema_version": 1, "saved_receivers": [], "receiver_name": "x" * 65},
+            {"schema_version": 1, "saved_receivers": [], "recording_folder": ""},
         ):
             with self.subTest(document=document), self.assertRaises(SettingsError):
                 decode_settings(document)
+
+    def test_existing_settings_keep_working_with_new_receiver_defaults(self):
+        self.assertEqual(
+            decode_settings({"schema_version": 1, "saved_receivers": [["127.0.0.1", "Desk"]]}),
+            AppSettings([("127.0.0.1", "Desk")]),
+        )
+
+    def test_receiver_preferences_round_trip(self):
+        settings = AppSettings([], "Studio Receiver", str(self.root / "Music"))
+        save_settings("Audio Receiver", settings)
+        self.assertEqual(load_settings("Audio Receiver"), settings)
+
+    def test_recording_directory_prefers_existing_music_folder(self):
+        home = self.root / "Profile"
+        music = home / "Music"
+        music.mkdir(parents=True)
+        with patch("app_settings.Path.home", return_value=home):
+            self.assertEqual(default_recording_directory(), music / "Audio Receiver Recordings")
+
+    def test_recording_directory_falls_back_to_local_app_data(self):
+        home = self.root / "Profile"
+        with patch("app_settings.Path.home", return_value=home):
+            self.assertEqual(
+                default_recording_directory(),
+                self.root / "Local Data" / "Audio Receiver" / "Recordings",
+            )
+
+    def test_recording_directory_writability_check_creates_and_cleans_up(self):
+        directory = self.root / "Recordings"
+        ensure_recording_directory_writable(directory)
+        self.assertTrue(directory.is_dir())
+        self.assertEqual(list(directory.iterdir()), [])
+
+    def test_recording_directory_writability_failure_is_reported(self):
+        with patch("app_settings.tempfile.NamedTemporaryFile", side_effect=PermissionError):
+            with self.assertRaisesRegex(SettingsError, "Recording folder is not writable"):
+                ensure_recording_directory_writable(self.root / "Recordings")
 
     def test_corrupt_file_is_preserved_and_does_not_fall_back_to_legacy(self):
         path = settings_path(self.app)
@@ -301,8 +342,60 @@ class StreamerSettingsIntegrationTests(unittest.TestCase):
 
 
 class ReceiverSettingsIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        tree = ast.parse((ROOT / "Audio Receiver.py").read_text(encoding="utf-8-sig"))
+        gui = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+        names = {
+            "create_menu", "start_recording", "save_preferences",
+            "choose_recording_folder", "change_receiver_name", "reset_settings",
+        }
+        methods = [
+            node for node in gui.body
+            if isinstance(node, ast.FunctionDef) and node.name in names
+        ]
+        self.namespace = {
+            "tk": Mock(),
+            "threading": Mock(),
+            "logging": logging,
+            "datetime": __import__("datetime").datetime,
+            "next_recording_path": __import__("audio_common").next_recording_path,
+            "ensure_recording_directory_writable": ensure_recording_directory_writable,
+            "default_recording_directory": default_recording_directory,
+            "save_settings": Mock(),
+            "filedialog": Mock(),
+            "simpledialog": Mock(),
+            "AppSettings": AppSettings,
+            "Path": Path,
+            "socket": Mock(gethostname=Mock(return_value="Test PC")),
+            "SettingsError": SettingsError,
+            "messagebox": Mock(),
+        }
+        exec(
+            compile(ast.Module(body=methods, type_ignores=[]), "<receiver menu>", "exec"),
+            self.namespace,
+        )
+
     def test_receiver_settings_load_errors_are_logged_and_shown(self):
         tree = ast.parse((ROOT / "Audio Receiver.py").read_text(encoding="utf-8-sig"))
+        log_path_assignment = next(
+            node for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "log_file_path"
+                for target in node.targets
+            )
+        )
+        namespace = {"appdata_local_path": Path("local-data")}
+        exec(
+            compile(ast.Module(body=[log_path_assignment], type_ignores=[]),
+                    "<receiver log path>", "exec"),
+            namespace,
+        )
+        self.assertEqual(
+            namespace["log_file_path"],
+            Path("local-data") / "logs" / "Audio_Receiver.log",
+        )
+
         gui = next(node for node in tree.body if isinstance(node, ast.ClassDef))
         init = next(node for node in gui.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
         settings_try = next(
@@ -324,6 +417,99 @@ class ReceiverSettingsIntegrationTests(unittest.TestCase):
         namespace["load_settings"].assert_called_once_with("Audio Receiver")
         namespace["messagebox"].showerror.assert_called_once()
         self.assertIsNone(app.settings)
+
+    def test_receiver_menu_contains_all_requested_actions(self):
+        menus = [Mock() for _ in range(4)]
+        self.namespace["tk"].Menu.side_effect = menus
+        app = Mock()
+        self.namespace["create_menu"](app)
+        labels = [
+            call.kwargs.get("label")
+            for menu in menus
+            for call in menu.add_command.call_args_list + menu.add_cascade.call_args_list
+        ]
+        self.assertCountEqual(labels, [
+            "Choose Recording Folder...", "Open Recording Folder", "Exit", "File",
+            "Receiver Name...", "Reset Settings", "Options",
+            "Open Log Folder", "About Audio Receiver", "Help",
+        ])
+        app.root.config.assert_called_once_with(menu=menus[0])
+
+    def test_start_recording_uses_a_fresh_non_overwriting_filename(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            timestamp = __import__("datetime").datetime(2026, 1, 2, 3, 4, 5)
+            existing = directory / "recording_20260102_030405.mp3"
+            existing.touch()
+            app = Mock()
+            app.process = None
+            app.recordings_dir = directory
+            app.recording_filename = existing
+            self.namespace["datetime"] = Mock(now=Mock(return_value=timestamp))
+            self.namespace["start_recording"](app)
+            self.assertEqual(
+                app.recording_filename,
+                directory / "recording_20260102_030405_2.mp3",
+            )
+            app.stream_thread.start.assert_called_once()
+            self.assertTrue(app.is_recording_mode)
+
+    def test_start_recording_reports_unwritable_folder_without_starting(self):
+        app = Mock()
+        app.process = None
+        app.recordings_dir = Path("unused")
+        app.is_recording_mode = False
+        self.namespace["ensure_recording_directory_writable"] = Mock(
+            side_effect=SettingsError("Recording folder is not writable")
+        )
+        with self.assertLogs(level="ERROR"):
+            self.namespace["start_recording"](app)
+        self.namespace["messagebox"].showerror.assert_called_once()
+        self.namespace["threading"].Thread.assert_not_called()
+        self.assertFalse(app.is_recording_mode)
+
+    def test_selected_recording_folder_is_checked_and_persisted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Mock()
+            app.root = Mock()
+            app.settings = AppSettings([], "Studio")
+            app.recordings_dir = Path(temporary) / "old"
+            app.save_preferences = self.namespace["save_preferences"].__get__(app)
+            selected = Path(temporary) / "new"
+            self.namespace["filedialog"].askdirectory.return_value = str(selected)
+            self.namespace["choose_recording_folder"](app)
+            self.assertEqual(app.settings.recording_folder, str(selected))
+            self.assertEqual(app.settings.receiver_name, "Studio")
+            self.assertEqual(app.recordings_dir, selected)
+            self.assertEqual(list(selected.iterdir()), [])
+            self.namespace["save_settings"].assert_called_once_with(
+                "Audio Receiver", app.settings
+            )
+
+    def test_failed_preference_save_preserves_current_settings(self):
+        app = Mock()
+        original = AppSettings([], "Original")
+        app.settings = original
+        self.namespace["save_settings"].side_effect = SettingsError("Disk full")
+        with self.assertLogs(level="ERROR"):
+            self.assertFalse(self.namespace["save_preferences"](app, AppSettings()))
+        self.assertIs(app.settings, original)
+        self.namespace["messagebox"].showerror.assert_called_once()
+
+    def test_receiver_name_and_reset_menu_actions_persist_preferences(self):
+        app = Mock()
+        app.root = Mock()
+        app.settings = AppSettings([], "Old Name", "C:\\Recordings")
+        app.recordings_dir = Path("C:\\Recordings")
+        app.save_preferences = self.namespace["save_preferences"].__get__(app)
+        self.namespace["simpledialog"].askstring.return_value = "  New Name  "
+        self.namespace["change_receiver_name"](app)
+        self.assertEqual(app.settings.receiver_name, "New Name")
+
+        self.namespace["messagebox"].askyesno.return_value = True
+        self.namespace["reset_settings"](app)
+        self.assertEqual(app.settings, AppSettings())
+        self.namespace["messagebox"].showinfo.assert_called_once()
 
 
 if __name__ == "__main__":
