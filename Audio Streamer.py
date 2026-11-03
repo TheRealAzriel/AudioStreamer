@@ -5,7 +5,6 @@ from tkinter import messagebox, ttk
 import subprocess
 import platform
 import logging
-import json
 import os
 import ctypes
 from ctypes import POINTER, cast
@@ -14,6 +13,7 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
 from audio_common import app_data_directory, is_valid_ip, streamer_status
 from streamer_lifecycle import RECEIVER_DISCONNECTED, StreamerLifecycle
+from app_settings import APP_VERSION, AppSettings, SettingsError, load_settings, save_settings
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
@@ -38,7 +38,7 @@ log_file_path.parent.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(filename=log_file_path, level=logging.DEBUG,
                     format='%(asctime)s %(levelname)s:%(message)s')
 
-logging.debug('Starting App...')
+logging.debug('Starting Audio Streamer %s', APP_VERSION)
 
 # Set paths
 ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
@@ -76,24 +76,38 @@ vb_cable_path_x86 = vb_cable_dir / 'VBCABLE_Setup.exe'
 
 # Load IP history
 ip_history = []
+settings_available = False
 
 def load_ip_history():
-    global ip_history
-    if history_file.exists():
-        try:
-            with open(history_file, 'r') as file:
-                ip_history = json.load(file)
-        except Exception as e:
-            logging.error('Failed to load IP history: %s', e)
-            ip_history = []
-
-def save_ip_history():
+    global ip_history, settings_available
+    settings_available = False
     try:
-        history_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(history_file, 'w') as file:
-            json.dump(ip_history, file)
-    except Exception as e:
-        logging.error('Failed to save IP history: %s', e)
+        settings = load_settings('Audio Streamer', (
+            history_file,
+            Path.home() / 'AppData' / 'Local' / 'Audio Streamer' / 'ip_history.json',
+            script_dir / 'ip_history.json',
+        ))
+    except SettingsError as exc:
+        logging.exception("Failed to load Streamer settings")
+        messagebox.showerror("Settings Error", f"{exc}\nSaved connections will not be changed. Fix the file and restart.")
+        return
+    ip_history = settings.saved_receivers
+    settings_available = True
+
+def save_ip_history(receivers):
+    global ip_history
+    if not settings_available:
+        logging.error("Saved connections unavailable because settings could not be loaded")
+        messagebox.showerror("Settings Error", "Saved connections are unavailable. Fix the settings file and restart.")
+        return False
+    try:
+        save_settings('Audio Streamer', AppSettings(receivers))
+    except SettingsError as exc:
+        logging.exception("Failed to save Streamer settings")
+        messagebox.showerror("Settings Error", f"{exc}\nSaved connections were not changed.")
+        return False
+    ip_history = receivers
+    return True
 
 # Duplicate _MEIPASS logic removed - already defined above
 
@@ -151,9 +165,7 @@ def install_vb_cable():
         return False
 
 def delete_ip_history():
-    global ip_history
-    ip_history = []
-    save_ip_history()
+    return save_ip_history([])
 
 class FFMPEGSenderGUI:
     def __init__(self, root):
@@ -346,7 +358,7 @@ class FFMPEGSenderGUI:
 
     def on_ip_selected(self, event):
         selected_text = self.ip_dropdown.get()
-        name, ip = selected_text.split(": ")
+        name, ip = selected_text.rsplit(": ", 1)
         self.ip_entry.delete(0, tk.END)
         self.ip_entry.insert(0, ip)
         self.name_entry.delete(0, tk.END)
@@ -369,18 +381,19 @@ class FFMPEGSenderGUI:
             return False
 
     def add_ip_to_history(self, ip, name):
+        receivers = list(ip_history)
         # Check for an existing entry and update it if found
-        for index, (existing_ip, existing_name) in enumerate(ip_history):
+        for index, (existing_ip, existing_name) in enumerate(receivers):
             if existing_ip == ip:
-                ip_history[index] = (ip, name)
+                receivers[index] = (ip, name)
                 break
         else:
             # Add new entry if not found
-            ip_history.insert(0, (ip, name))
-            if len(ip_history) > 10:
-                ip_history.pop()
+            receivers.insert(0, (ip, name))
+            if len(receivers) > 10:
+                receivers.pop()
 
-        save_ip_history()
+        return save_ip_history(receivers)
 
     def start_stream(self):
         logging.debug('Starting stream...')
@@ -467,7 +480,8 @@ class FFMPEGSenderGUI:
 
     def clear_ip_history(self):
         if messagebox.askyesno("Clear History", "Are you sure you want to clear the IP history?"):
-            delete_ip_history()
+            if not delete_ip_history():
+                return
             self.update_ip_dropdown()
             self.ip_entry.delete(0, tk.END)
             self.name_entry.delete(0, tk.END)
@@ -482,7 +496,7 @@ class FFMPEGSenderGUI:
         
         # Parse the selected text to get the IP and name
         try:
-            name, ip = selected_text.split(": ")
+            name, ip = selected_text.rsplit(": ", 1)
         except ValueError:
             messagebox.showerror("Error", "Invalid selection format.")
             return
@@ -490,17 +504,18 @@ class FFMPEGSenderGUI:
         # Confirm deletion
         if messagebox.askyesno("Delete Record", f"Are you sure you want to delete the record:\n{name}: {ip}?"):
             # Find and remove the record from ip_history
-            global ip_history
             for index, (existing_ip, existing_name) in enumerate(ip_history):
                 if existing_ip == ip and existing_name == name:
-                    ip_history.pop(index)
+                    receivers = list(ip_history)
+                    receivers.pop(index)
                     break
             else:
                 messagebox.showerror("Error", "Record not found in history.")
                 return
             
             # Save updated history
-            save_ip_history()
+            if not save_ip_history(receivers):
+                return
             
             # Update dropdown
             self.update_ip_dropdown()

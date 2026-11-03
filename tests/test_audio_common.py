@@ -1,4 +1,5 @@
 import ast
+import os
 from datetime import datetime
 from pathlib import Path
 import subprocess
@@ -21,6 +22,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PathTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {}, clear=False)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("LOCALAPPDATA", None)
+
+    def test_local_appdata_environment_takes_precedence(self):
+        with patch.dict(os.environ, {"LOCALAPPDATA": r"C:\Custom Local Data"}):
+            self.assertEqual(
+                app_data_directory("Audio Streamer"), Path(r"C:\Custom Local Data\Audio Streamer")
+            )
+
     def test_application_data_paths_preserve_current_locations(self):
         home = Path(r"C:\Users\Test User")
         with patch("audio_common.Path.home", return_value=home):

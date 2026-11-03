@@ -1,9 +1,13 @@
 from datetime import datetime
 from pathlib import Path
+import os
 import socket
 
 
 def app_data_directory(app_name: str) -> Path:
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / app_name
     return Path.home() / "AppData" / "Local" / app_name
 
 

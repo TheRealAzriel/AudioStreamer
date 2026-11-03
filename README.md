@@ -102,6 +102,47 @@ VS Code should use its `Scripts\python.exe` too; an existing terminal's bare
 - A connection is saved only after streaming is confirmed. Stop and window-close
   do not block Tk while FFmpeg is shutting down; the window closes after cleanup.
 
+## Per-user settings
+
+Both apps use the shared settings module and application-version metadata
+(`APP_VERSION`, currently `1.0.3`). Version information is included in startup logs.
+Settings live outside the application/install folder:
+
+- `%LOCALAPPDATA%\Audio Streamer\settings.json`
+- `%LOCALAPPDATA%\Audio Receiver\settings.json`
+
+If `LOCALAPPDATA` is unavailable, the path falls back to
+`%USERPROFILE%\AppData\Local`. The same location is used for each app's log.
+Missing settings use in-memory defaults; a file is created on the first save.
+Receiver currently only loads the foundation; its menu and recording-folder
+preferences are reserved for Slice 2B. Recording behavior has not changed.
+
+The versioned JSON format is:
+
+```json
+{
+  "schema_version": 1,
+  "saved_receivers": [["192.168.1.10", "Office Receiver"]]
+}
+```
+
+On the Streamer's first run without settings, saved addresses are imported from
+the first existing `ip_history.json`: the current per-user data folder, the old
+`%USERPROFILE%\AppData\Local\Audio Streamer` location, then the application's
+resource/source folder. The original history file is never deleted or changed.
+Once settings exist they take precedence; clearing saved connections will not
+re-import old history.
+
+JSON structure, schema version, IPv4 addresses, and names are validated. A bad or
+unreadable file is reported in the log and an error dialog, not overwritten with
+empty defaults. Manual streaming remains available, but saved-connection changes
+are blocked until the file is repaired and the app restarted.
+
+Saves write and flush a temporary file in the settings folder, then atomically
+replace the destination. If saving fails, the previous settings and in-memory
+connection list remain unchanged, and the error is displayed. The temporary file
+is cleaned up. Do not edit the file while either app is running.
+
 ## Installers
 
 The project now includes two separate installer definitions:

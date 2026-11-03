@@ -167,7 +167,7 @@ Validation:
 
 **Branch:** `fix/streamer-process-lifecycle`
 
-**Status:** Implemented; awaiting review and merge. Slice 1B remains pending.
+**Status:** Merged into local and remote `master` at `b03383e`. Slice 1B remains pending.
 
 - Model `idle`, `connecting`, `streaming`, `stopping`, and `error` states.
 - Detect immediate and later FFmpeg failures.
@@ -215,12 +215,39 @@ Validation:
 
 **Branch:** `feature/app-settings`
 
+**Status:** Implemented; awaiting review and merge.
+
 - Store per-user settings under `%LOCALAPPDATA%`.
 - Validate settings loaded from JSON.
 - Save settings atomically.
 - Report load/save errors instead of silently discarding them.
 - Define shared application-version metadata.
 - Preserve or migrate existing saved Receiver addresses.
+
+Implementation and validation:
+- Both apps load the shared versioned settings model and log the shared
+  application version (`1.0.3`). Settings/log paths honor `LOCALAPPDATA`, with
+  the previous home-based path as a fallback.
+- Streamer migrates legacy `ip_history.json` without modifying it. Existing new
+  settings take precedence, including an intentionally empty saved list.
+- Malformed/unreadable settings produce logged and visible errors. Streamer
+  blocks saved-connection writes after a load error instead of overwriting data.
+- Saves validate input, flush a same-directory temporary file, and atomically
+  replace the destination. Save failures preserve the old file and connection UI.
+- All 93 tests pass on Python 3.11.9, including 29 settings/migration/UI tests and
+  a new LOCALAPPDATA path test. Project Python/spec syntax checks also pass.
+- Source Streamer GUI migration, dropdown selection, saved names containing
+  colons, persistence, and reload were verified using temporary app data only.
+- Pylance diagnostics requests timed out; editor diagnostics remain unverified.
+- Menus, Receiver recording behavior, and Receiver process cleanup are unchanged.
+  Settings files for Receiver are not written until a future preference is saved.
+- Both apps were rebuilt for Slice 2A on November 3, 2026 using a relocated
+  build because the existing Dropbox output folders are locked. The `dist` and
+  mirrored `build` folders were refreshed. `app_settings` and `audio_common`
+  are embedded in both executables, and both packaged windows launch
+  responsively. The build reuses the unchanged checked-in specs and runtime
+  assets; the package `_internal` folders still have 945 Receiver / 977
+  Streamer runtime files. Installers have not been rebuilt.
 
 ### Slice 2B: Receiver Menu and Recording Folder
 

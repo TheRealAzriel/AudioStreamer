@@ -18,6 +18,7 @@ from typing import cast as typing_cast
 from typing import Any
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
+from app_settings import APP_VERSION, SettingsError, load_settings
 from audio_common import (
     app_data_directory,
     receiver_button_states,
@@ -54,7 +55,7 @@ ffplay_path = script_dir / 'ffmpeg' / 'bin' / 'ffplay.exe'
 ffprobe_path = script_dir / 'ffmpeg' / 'bin' / 'ffprobe.exe'
 
 # Log path information for debugging
-logging.info("Application started")
+logging.info("Audio Receiver %s started", APP_VERSION)
 logging.info(f"Base path: {base_path}")
 logging.info(f"Script dir: {script_dir}")
 logging.info(f"Looking for ffplay at: {ffplay_path}")
@@ -103,6 +104,12 @@ class FFplayGUI:
         self.root.geometry("400x475")
         self.primary_button_font = ("Arial", 10, "bold")
         self.secondary_button_font = ("Arial", 9, "bold")
+        self.settings = None
+        try:
+            self.settings = load_settings('Audio Receiver')
+        except SettingsError as exc:
+            logging.exception("Failed to load Receiver settings")
+            messagebox.showerror("Settings Error", f"{exc}\nThe file has not been changed.")
         # Window is already withdrawn from main block
         # Using default system background color (like Audio Streamer)
 
