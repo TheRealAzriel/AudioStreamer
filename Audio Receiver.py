@@ -19,6 +19,7 @@ from typing import cast as typing_cast
 from typing import Any
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
+from process_diagnostics import ProcessDiagnostics
 from app_settings import (
     APP_VERSION,
     AppSettings,
@@ -56,7 +57,8 @@ log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
 # Set up logging to file
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[logging.FileHandler(log_file_path)])
+                    handlers=[logging.FileHandler(log_file_path, encoding="utf-8")],
+                    force=True)
 
 # Construct full paths to 'ffmpeg.exe', 'ffplay.exe' and 'ffprobe.exe' using pathlib
 ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
@@ -65,6 +67,7 @@ ffprobe_path = script_dir / 'ffmpeg' / 'bin' / 'ffprobe.exe'
 
 # Log path information for debugging
 logging.info("Audio Receiver %s started", APP_VERSION)
+logging.info("Settings path: %s; log path: %s", appdata_local_path / "settings.json", log_file_path)
 logging.info(f"Base path: {base_path}")
 logging.info(f"Script dir: {script_dir}")
 logging.info(f"Looking for ffplay at: {ffplay_path}")
@@ -146,9 +149,11 @@ class FFplayGUI:
         self.audio_process: subprocess.Popen[bytes] | None = None
         self.stream_thread = None
         self.play_process: subprocess.Popen[bytes] | None = None
+        self.play_diagnostics = None
         self.volume: Any = None
         self.is_muted = False
         self.is_recording_mode = False
+        self.receiver_stop_reason = None
         self.running = True  # Flag to control monitoring thread
         self.connection_status = "idle"  # Track connection health
         self.pending_volume_level: float | None = None
@@ -160,6 +165,7 @@ class FFplayGUI:
             else default_recording_directory()
         )
         self.recording_filename = next_recording_path(self.recordings_dir, datetime.now())
+        logging.info("Receiver recording folder: %s", self.recordings_dir)
         self.create_menu()
 
         self.local_ip = self.get_local_ip()
@@ -464,6 +470,7 @@ class FFplayGUI:
     def start_stream(self):
         logging.info("Starting TCP stream reception...")
         if self.process is None:
+            self.receiver_stop_reason = None
             self.is_recording_mode = False
             self.stream_thread = threading.Thread(target=self.run_receiver, daemon=True)
             self.stream_thread.start()
@@ -472,11 +479,12 @@ class FFplayGUI:
             self.set_button_enabled(self.record_button, False)
             self.update_status("Receiving Stream", "green")
             self.start_monitoring()
-            logging.info("TCP stream reception started successfully")
+            logging.info("Receiver listener startup requested; awaiting Streamer connection")
 
     def start_recording(self):
         logging.info("Starting TCP stream reception with recording...")
         if self.process is None:
+            self.receiver_stop_reason = None
             try:
                 ensure_recording_directory_writable(self.recordings_dir)
             except SettingsError as exc:
@@ -493,7 +501,7 @@ class FFplayGUI:
             self.set_button_enabled(self.record_button, False)
             self.update_status("Receiving & Recording", "orange")
             self.start_monitoring()
-            logging.info("TCP stream reception with recording started successfully")
+            logging.info("Recording listener startup requested; awaiting Streamer audio")
 
     def create_menu(self):
         menu_bar = tk.Menu(self.root)
@@ -534,6 +542,7 @@ class FFplayGUI:
             if settings.recording_folder
             else default_recording_directory()
         )
+        logging.info("Receiver preferences saved: recording folder=%s", self.recordings_dir)
         return True
 
     def choose_recording_folder(self):
@@ -642,10 +651,12 @@ class FFplayGUI:
                     self.recording_filename,
                     exit_code,
                 )
-            elif exit_code not in (0, None):
-                logging.error(
-                    "Recording output exists but FFmpeg exited with code %s: %s (%s bytes)",
+            elif exit_code != 0:
+                logging.warning(
+                    "Recording output exists; finalization not confirmed: exit_code=%s; "
+                    "reason=%s; path=%s (%s bytes)",
                     exit_code,
+                    self.receiver_stop_reason or "remote stream ended or process exited",
                     self.recording_filename,
                     size,
                 )
@@ -658,6 +669,10 @@ class FFplayGUI:
 
     def run_receiver(self):
         ffmpeg_exit_code = None
+        diagnostics = []
+        receiver_process = None
+        recording_mode = self.is_recording_mode
+        failure = None
         if self.is_recording_mode:
             logging.info("Starting ffmpeg TCP listener with recording on port 6005...")
         else:
@@ -678,7 +693,7 @@ class FFplayGUI:
             # FFmpeg command with dual output for Windows (DirectSound speakers + MP3 file)
             cmd = [
                 exe_path,
-                '-hide_banner', '-loglevel', 'error',
+                '-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:2',
                 '-f', 'mpegts',
                 '-i', 'tcp://0.0.0.0:6005?listen=1&tcp_nodelay=1',
                 # Output 1: To speakers via DirectSound
@@ -702,7 +717,7 @@ class FFplayGUI:
                 exe_path,
                 '-nodisp', 
                 '-autoexit',
-                '-loglevel', 'quiet',     # Silence all console output
+                '-loglevel', 'info',
                 '-nostats',               # Disable progress printouts in the pipe
                 '-fflags', 'nobuffer+fastseek', 
                 '-flags', 'low_delay', 
@@ -720,31 +735,41 @@ class FFplayGUI:
         try:
             if self.is_recording_mode:
                 # For recording mode, ffmpeg outputs to both speakers and file
-                audio_cmd = [str(ffplay_path.resolve()), '-nodisp', '-autoexit', '-f', 'wav', '-i', 'pipe:0']
+                audio_cmd = [
+                    str(ffplay_path.resolve()), '-nodisp', '-autoexit',
+                    '-loglevel', 'error', '-nostats', '-f', 'wav', '-i', 'pipe:0',
+                ]
                 
                 # Start ffmpeg process with dual outputs
                 self.process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     creationflags=0x08000000 | 0x00000008  # Combine No Window and Detached Process
                 )
                 proc = typing_cast(subprocess.Popen[bytes], self.process)
+                receiver_process = proc
+                diagnostics.append((ProcessDiagnostics(proc.stderr, "Receiver FFmpeg"), proc))
+                logging.info("Receiver FFmpeg started: pid=%s; listening on TCP port 6005", proc.pid)
                 
                 # Start ffplay to handle the piped audio for speakers
                 self.audio_process = subprocess.Popen(
                     audio_cmd,
                     stdin=proc.stdout,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     creationflags=0x08000000 | 0x00000008  # Combine No Window and Detached Process
                 )
+                diagnostics.append((
+                    ProcessDiagnostics(self.audio_process.stderr, "Receiver playback FFplay"),
+                    self.audio_process,
+                ))
                 
                 # Close the stdout pipe in parent to avoid deadlock
                 if proc.stdout:
                     proc.stdout.close()
                 
-                logging.info("ffmpeg TCP listener active on port 6005 with recording...")
+                logging.info("Receiver recording process launched; awaiting confirmed audio output")
                 # Wait for ffmpeg process (it will handle both outputs)
                 ffmpeg_exit_code = proc.wait()
             else:
@@ -752,40 +777,66 @@ class FFplayGUI:
                 self.process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     creationflags=0x08000000 | 0x00000008  # Combine No Window and Detached Process
                 )
                 proc = typing_cast(subprocess.Popen[bytes], self.process)
-                logging.info("ffplay TCP listener active on port 6005, waiting for connections...")
+                receiver_process = proc
+                diagnostics.append((ProcessDiagnostics(proc.stderr, "Receiver FFplay"), proc))
+                logging.info("Receiver FFplay started: pid=%s; listening on TCP port 6005", proc.pid)
+                logging.info("Receiver playback process launched; awaiting input-open confirmation")
                 # Wait for process completion
                 proc.wait()
             
-        except Exception as e:
-            logging.error(f"Failed to start TCP listener: {str(e)}")
+        except (OSError, subprocess.SubprocessError) as e:
+            failure = f"Unable to run Receiver audio process: {e}"
+            logging.exception("Receiver audio process failed")
         finally:
-            logging.info("TCP listener stopped")
+            reason = self.receiver_stop_reason or "remote stream ended or process exited"
+            logging.info("TCP listener stopped: %s", reason)
             # Cleanup any remaining processes
             if hasattr(self, 'audio_process') and self.audio_process:
                 try:
                     self.audio_process.terminate()
                     self.audio_process.wait(timeout=2)
-                except:
+                except (OSError, subprocess.SubprocessError):
+                    logging.exception("Receiver playback cleanup required forced termination")
                     try:
                         self.audio_process.kill()
-                    except:
-                        pass
+                        self.audio_process.wait(timeout=2)
+                    except (OSError, subprocess.SubprocessError):
+                        logging.exception("Unable to stop Receiver playback process")
                 self.audio_process = None
-            
-            if self.is_recording_mode:
+            if receiver_process is not None and receiver_process.poll() is None:
+                try:
+                    receiver_process.kill()
+                    receiver_process.wait(timeout=3)
+                except (OSError, subprocess.SubprocessError):
+                    logging.exception("Unable to stop Receiver audio process")
+            for diagnostic, child in diagnostics:
+                diagnostic.finish(child.returncode, reason)
+            if receiver_process is not None and receiver_process.returncode and not self.receiver_stop_reason:
+                failure = (
+                    f"Receiver audio process exited with code {receiver_process.returncode}. "
+                    "See Open Log Folder for process diagnostics."
+                )
+                logging.error(failure)
+            if recording_mode:
                 self.log_recording_result(ffmpeg_exit_code)
             self.process = None
             if self.root.winfo_exists():
                 self.root.after(0, self.update_button_states)
-                self.root.after(0, self.update_status, "Idle", "blue")
-                if self.is_recording_mode:
+                if failure:
+                    self.root.after(0, self.update_status, "Error", "red")
+                    self.root.after(0, messagebox.showerror, "Receiver Audio Error", failure)
+                else:
+                    self.root.after(0, self.update_status, "Idle", "blue")
+                if recording_mode:
                     self.root.after(0, self.update_play_button_state)
 
     def stop_stream(self):
+        self.receiver_stop_reason = "user requested Stop Receiving"
+        logging.info("Receiver stop requested by user")
         if self.process:
             proc = typing_cast(subprocess.Popen[bytes], self.process)
             def terminate_process_thread():
@@ -923,6 +974,15 @@ class FFplayGUI:
         if self.play_process and self.play_process.poll() is None:
             self.play_button.after(1000, self.check_playback_status)
         else:
+            if self.play_process is not None and self.play_diagnostics is not None:
+                self.play_diagnostics.finish(
+                    self.play_process.returncode, "recorded-file playback ended"
+                )
+                self.play_diagnostics = None
+                if self.play_process.returncode:
+                    messagebox.showerror(
+                        "Playback Error", "Recorded-file playback failed. See Open Log Folder for details."
+                    )
             # If the process has finished, reset the button states
             self.set_button_enabled(self.play_button, True)
             self.set_button_enabled(self.stop_play_button, False)
@@ -931,9 +991,23 @@ class FFplayGUI:
     def play_recording(self):
         # Start playing the recording
         if os.path.exists(self.recording_filename):
-            self.play_process = subprocess.Popen([str(ffplay_path), '-nodisp', '-autoexit', '-loglevel', 'quiet', str(self.recording_filename)],
-                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                 creationflags=0x08000000 | 0x00000008)
+            logging.info("Playing recording: %s", self.recording_filename)
+            try:
+                self.play_process = subprocess.Popen(
+                    [str(ffplay_path), '-nodisp', '-autoexit', '-loglevel', 'error',
+                     '-nostats', str(self.recording_filename)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                    creationflags=0x08000000 | 0x00000008,
+                )
+            except OSError:
+                logging.exception("Unable to start recorded-file playback")
+                messagebox.showerror(
+                    "Playback Error", "Unable to start playback. See Open Log Folder for details."
+                )
+                return
+            self.play_diagnostics = ProcessDiagnostics(
+                self.play_process.stderr, "Receiver recorded-file FFplay"
+            )
             # Update button states
             self.set_button_enabled(self.play_button, False)
             self.set_button_enabled(self.stop_play_button, True)
@@ -946,18 +1020,27 @@ class FFplayGUI:
             try:
                 self.play_process.terminate()
                 self.play_process.wait(timeout=2)
-            except:
+            except (OSError, subprocess.SubprocessError):
+                logging.exception("Recorded-file playback required forced termination")
                 try:
                     self.play_process.kill()
-                except:
-                    pass
+                    self.play_process.wait(timeout=2)
+                except (OSError, subprocess.SubprocessError):
+                    logging.exception("Unable to stop recorded-file playback")
             finally:
+                if self.play_diagnostics is not None:
+                    self.play_diagnostics.finish(
+                        self.play_process.returncode, "user requested Stop Playing"
+                    )
+                    self.play_diagnostics = None
                 self.play_process = None
                 # Update button states
                 self.set_button_enabled(self.play_button, True)
                 self.set_button_enabled(self.stop_play_button, False)
 
     def on_closing(self):
+        self.receiver_stop_reason = "window close requested"
+        logging.info("Audio Receiver window close requested")
         try:
             self.root.withdraw() 
             
@@ -979,6 +1062,8 @@ class FFplayGUI:
         except Exception as e:
             logging.error(f"Error during fast shutdown: {e}")
         finally:
+            logging.info("Audio Receiver closing; process cleanup requested")
+            logging.shutdown()
             self.root.destroy()
             os._exit(0)
 

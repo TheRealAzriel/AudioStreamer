@@ -52,6 +52,29 @@ class StreamerLifecycleTests(unittest.TestCase):
         self.wait_for("idle")
         self.assertEqual(self.lifecycle.error, "")
 
+    def test_log_explains_confirmed_stream_and_requested_stop(self):
+        with self.assertLogs(level="INFO") as logs:
+            self.start("import sys; print('out_time_us=1000'); sys.stdin.readline()")
+            self.wait_for("streaming")
+            self.lifecycle.stop()
+            self.wait_for("idle")
+        text = "\n".join(logs.output)
+        self.assertIn("audio output confirmed", text)
+        self.assertIn("reason=user-requested stop", text)
+        self.assertIn("exit_code=0", text)
+
+    def test_stderr_is_bounded_and_only_summarized_at_exit(self):
+        with self.assertLogs(level="INFO") as logs:
+            self.start(
+                "import sys; sys.stderr.write('diagnostic\\n'*1000);"
+                "sys.stderr.flush(); print('out_time_us=1000'); sys.stdin.readline()"
+            )
+            self.wait_for("streaming")
+            self.lifecycle.stop()
+            self.wait_for("idle")
+        self.assertLessEqual("\n".join(logs.output).count("diagnostic\n"), 8)
+        self.assertIn("recent diagnostics", "\n".join(logs.output))
+
     def test_zero_or_unavailable_progress_does_not_confirm_streaming(self):
         self.start("import sys; print('out_time_us=N/A'); print('out_time_us=0'); sys.stdin.readline()")
         time.sleep(0.15)

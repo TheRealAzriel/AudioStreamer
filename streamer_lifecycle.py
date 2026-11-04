@@ -40,11 +40,13 @@ class StreamerLifecycle:
         self.error = ""
         self._stop.clear()
         self.state = "connecting"
+        logging.info("Streamer connection attempt: starting FFmpeg")
         self._worker = threading.Thread(target=self._run, args=(command,), daemon=True)
         self._worker.start()
 
     def stop(self):
         if self.state in ("connecting", "streaming", "stopping"):
+            logging.info("Streamer stop requested by user or window close")
             self.state = "stopping"
             self._stop.set()
         elif self.state == "error":
@@ -79,7 +81,7 @@ class StreamerLifecycle:
 
         def read_output(pipe, is_progress):
             try:
-                for line in iter(pipe.readline, b""):
+                for line in iter(lambda: pipe.readline(2048), b""):
                     text = line.decode("utf-8", errors="replace").strip()
                     if is_progress:
                         key, separator, value = text.partition("=")
@@ -90,8 +92,8 @@ class StreamerLifecycle:
                             except ValueError:
                                 logging.debug("Non-numeric FFmpeg progress: %s", text)
                     else:
-                        stderr.append(text)
-                        logging.error("[FFmpeg stderr] %s", text)
+                        if text:
+                            stderr.append(text)
             except (OSError, ValueError) as exc:
                 reader_errors.put(f"Unable to read FFmpeg output: {exc}")
                 logging.exception("FFmpeg output reader failed")
@@ -107,6 +109,7 @@ class StreamerLifecycle:
                     stderr=subprocess.PIPE,
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 )
+                logging.info("Streamer FFmpeg started: pid=%s", process.pid)
                 for pipe, is_progress in ((process.stdout, True), (process.stderr, False)):
                     reader = threading.Thread(
                         target=read_output, args=(pipe, is_progress), daemon=True
@@ -135,12 +138,14 @@ class StreamerLifecycle:
                         break
                     if progress.is_set() and not streaming:
                         streaming = True
+                        logging.info("Streamer audio output confirmed by FFmpeg progress")
                         self._events.put(("streaming", ""))
                 process.wait(timeout=3)
         except (OSError, subprocess.SubprocessError) as exc:
             error = f"Unable to run or stop FFmpeg: {exc}"
             logging.exception("FFmpeg lifecycle failed")
         finally:
+            requested_stop = requested_stop or self._stop.is_set()
             if process is not None:
                 if process.poll() is None:
                     try:
@@ -161,6 +166,17 @@ class StreamerLifecycle:
                     logging.error(error)
                 if not reader_errors.empty():
                     error = reader_errors.get_nowait()
+                signed_code = process.returncode
+                if signed_code is not None and signed_code > 2147483647:
+                    signed_code -= 4294967296
+                logging.info(
+                    "Streamer FFmpeg ended: reason=%s; exit_code=%s; signed_exit_code=%s; "
+                    "audio_output_confirmed=%s",
+                    "user-requested stop" if requested_stop else "unexpected exit",
+                    process.returncode, signed_code, progress.is_set(),
+                )
+                if stderr:
+                    logging.info("Streamer FFmpeg recent diagnostics:\n%s", "\n".join(stderr))
                 if not requested_stop and not error:
                     detail = "\n".join(stderr).strip()
                     logging.error(

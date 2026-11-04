@@ -42,10 +42,12 @@ log_file_path = appdata_local_path / 'logs' / 'Audio_Streamer.log'
 log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
 # Initialize logging correctly to the path in appdata_local_path
-logging.basicConfig(filename=log_file_path, level=logging.DEBUG,
-                    format='%(asctime)s %(levelname)s:%(message)s')
+logging.basicConfig(filename=log_file_path, level=logging.INFO,
+                    format='%(asctime)s %(levelname)s:%(message)s',
+                    encoding="utf-8", force=True)
 
-logging.debug('Starting Audio Streamer %s', APP_VERSION)
+logging.info('Starting Audio Streamer %s', APP_VERSION)
+logging.info("Settings path: %s; log path: %s", settings_path("Audio Streamer"), log_file_path)
 
 # Set paths
 ffmpeg_path = script_dir / 'ffmpeg' / 'bin' / 'ffmpeg.exe'
@@ -57,10 +59,9 @@ vb_cable_dir = script_dir / 'VBCABLE_Driver_Pack43'
 history_file = appdata_local_path / 'ip_history.json'
 
 # Log path information for debugging
-logging.debug(f"Base path: {script_dir}")
-logging.debug(f"Looking for ffmpeg at: {ffmpeg_path}")
-logging.debug(f"ffmpeg.exe exists: {ffmpeg_path.exists()}")
-logging.debug(f"SetPlayback.exe exists: {executable_path.exists()}")
+logging.info("Resource folder: %s", script_dir)
+logging.info("FFmpeg: %s; exists=%s", ffmpeg_path, ffmpeg_path.exists())
+logging.info("SetPlayBack: %s; exists=%s", executable_path, executable_path.exists())
 
 # Validate critical paths exist
 if not ffmpeg_path.exists():
@@ -100,6 +101,7 @@ def load_ip_history():
         return
     ip_history = settings.saved_receivers
     settings_available = True
+    logging.info("Streamer settings loaded: %s saved Receivers", len(ip_history))
 
 def save_ip_history(receivers):
     global ip_history
@@ -569,7 +571,9 @@ class FFMPEGSenderGUI:
             messagebox.showerror("Error", "Invalid IP address format.")
             return
 
+        logging.info("Connecting to Receiver %s on TCP port 6005", ip_address)
         audio_device = "CABLE Output (VB-Audio Virtual Cable)"
+        logging.info("Requested capture device: %s", audio_device)
         if not self.check_audio_device(audio_device):
             if messagebox.askyesno("Audio Device Not Found", "VB-Audio Virtual Cable is required. Do you want to install it now?"):
                 if not install_vb_cable():
@@ -694,7 +698,7 @@ class FFMPEGSenderGUI:
             messagebox.showinfo("Record Deleted", f"Record '{name}: {ip}' has been deleted.")
 
     def on_closing(self):
-        logging.debug('Closing application')
+        logging.info('Audio Streamer window close requested')
         self.closing = True
         self.stop_stream()
         if self.lifecycle.state == "idle":
@@ -716,4 +720,4 @@ if __name__ == "__main__":
         logging.error('Failed to set main window icon: %s', e)
     app = FFMPEGSenderGUI(root)
     root.mainloop()
-    logging.debug('Audio Streamer application closed')
+    logging.info('Audio Streamer application closed')

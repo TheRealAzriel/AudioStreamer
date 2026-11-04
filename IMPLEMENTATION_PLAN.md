@@ -350,6 +350,35 @@ Help
 - Keep discovery and the broader Receiver process-ownership refactor out of
   scope; coordinate any tightly coupled stop-diagnostics changes with Slice 1B.
 
+Implementation and validation (November 4, 2026):
+
+- Implemented startup/session/stop diagnostics in both apps with UTF-8 file
+  logging, process IDs, raw and signed exit codes, and bounded stderr summaries.
+- Receiver drains FFmpeg/FFplay stderr on reader threads; recording progress
+  confirms audio output. Playback-only reports input opened without claiming
+  speaker playback. Unexpected process failures are surfaced in the GUI.
+- Streamer retains its existing progress confirmation and friendly disconnect
+  handling, while logging requested stops and recent process errors without
+  per-line progress/error flooding.
+- Existing Receiver stop/close mechanics remain pending Slice 1B; nonempty
+  recordings with nonzero exit codes are reported as finalization unconfirmed.
+- Recorded-file playback also captures FFplay diagnostics and surfaces playback
+  failures instead of leaving its error pipe unread.
+- All 125 standard-library tests passed. A real bundled-FFmpeg synthetic-silence
+  check verified dual output, positive progress, exit code zero, and nonempty
+  MP3 output without changing audio devices or using the network.
+- Both apps were rebuilt into `dist\Slice 2D Test`; executables, required
+  FFmpeg/Tk runtime assets, and embedded diagnostics modules were verified.
+  Slice 2C test builds are unchanged.
+- User approved the packaged test on November 4, 2026. Receiver logs show
+  confirmed recording output, the user-requested stop, output-file size, and
+  subsequent recorded-file playback.
+- Follow up in Slice 1B: stopping playback during recording produced WAV
+  broken-pipe diagnostics, a nonzero recording-process exit, and an unconfirmed
+  recording finalization warning. Recorded-file playback also reported
+  `invalid new backstep -1`. Graceful recording shutdown remains unresolved;
+  the improved logs now expose the evidence rather than hiding these warnings.
+
 ## Phase 3: Hybrid Receiver Discovery
 
 ### Slice 3A: Discovery Protocol Spike

@@ -161,6 +161,26 @@ replace the destination. If saving fails, the previous settings and in-memory
 connection list remain unchanged, and the error is displayed. The temporary file
 is cleaned up. Do not edit the file while either app is running.
 
+### Session diagnostics (Slice 2D)
+
+Both apps write UTF-8 logs with startup version/resource/settings paths,
+process IDs, connection milestones, stop reasons, exit codes (including signed
+Windows codes), and a bounded tail of process diagnostics at session end.
+Streamer confirms output using FFmpeg progress. Receiver recording confirms
+output the same way; playback-only logs when FFplay opens its input, which is
+not proof that speakers are playing.
+
+Process stderr is continuously drained so it cannot block audio, but only
+recent diagnostic lines are retained. Progress messages are not logged one by
+one. Unexpected Receiver process failures show an error and direct users to
+the log; a requested stop is labeled separately.
+
+Recording logs include the output path and size. Missing/empty output is an
+error; nonzero or unavailable exit codes leave finalization unconfirmed even
+when a nonempty file exists. Receiver's existing forced-stop/window-close
+behavior is not replaced here; graceful owned-process cleanup remains Slice 1B.
+This logging does not establish a firewall failure without process evidence.
+
 ## Installers
 
 The project now includes two separate installer definitions:
