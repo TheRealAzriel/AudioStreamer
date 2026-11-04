@@ -181,6 +181,30 @@ when a nonempty file exists. Receiver's existing forced-stop/window-close
 behavior is not replaced here; graceful owned-process cleanup remains Slice 1B.
 This logging does not establish a firewall failure without process evidence.
 
+## Discovery protocol spike (Slice 3A)
+
+The standalone `discovery_spike.py` prototype uses IPv4 UDP port 6006; neither
+app runs it yet. No audio devices, app settings, or firewall rules are changed.
+Use two PowerShell terminals for a bounded, local-only test:
+
+```powershell
+& "H:\Dropbox\Audio Streamer Programs\.venv311\Scripts\python.exe" -B "H:\Dropbox\Audio Streamer Programs\AudioStreamer\discovery_spike.py" respond --bind 127.0.0.1
+```
+
+```powershell
+& "H:\Dropbox\Audio Streamer Programs\.venv311\Scripts\python.exe" -B "H:\Dropbox\Audio Streamer Programs\AudioStreamer\discovery_spike.py" discover --interface 127.0.0.1/8 --unicast
+```
+
+The responder exits after 30 seconds; discovery waits up to 2 seconds and prints
+JSON results. For an explicitly authorized LAN test, bind the responder to
+`0.0.0.0` and omit `--unicast` on the discovering machine, supplying its actual
+local IPv4/prefix with `--interface`. Repeat `--interface` to select adapters.
+Do not include VPN interfaces unless intentionally testing that network.
+Inbound UDP firewall policy may require administrator approval; the prototype
+does not change policy. Empty results do not identify the cause of failure.
+See the Slice 3A section of `IMPLEMENTATION_PLAN.md` for the protocol decision,
+limits, compatibility rules, and outstanding physical-network tests.
+
 ## Installers
 
 The project now includes two separate installer definitions:

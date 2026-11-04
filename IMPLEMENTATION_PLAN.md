@@ -385,12 +385,111 @@ Implementation and validation (November 4, 2026):
 
 **Branch:** `spike/receiver-discovery-protocol`
 
+**Status:** Prototype and local validation complete; physical-network validation
+remains outstanding before production discovery approval.
+
 - Compare dependency-free UDP discovery with mDNS/zeroconf.
 - Test multiple adapters, VPNs, Windows network profiles, and firewall behavior.
 - Define bounded request/response messages with protocol version, request nonce, Receiver name, address, application version, and capabilities.
 - Decide IPv4-only versus dual-stack initial support.
 - Document malformed-packet, duplicate, timeout, and compatibility behavior.
 - Confirm that the approach can operate under a standard user account.
+
+#### Spike decision: IPv4 UDP request/reply
+
+Use dependency-free UDP discovery on port **6006**, separate from the existing
+TCP audio port **6005**. Keep manual and saved IP addresses as the fallback.
+The standalone `discovery_spike.py` prototype is not imported or started by
+either app; responder integration and the discovery UI remain Slices 3B/3C.
+
+| Option | Benefits | Costs and limits | Decision |
+|---|---|---|---|
+| UDP subnet broadcast with unicast replies | Standard library only; explicit on-demand scans; small bounded JSON contract | Custom protocol; broadcasts usually stay on one subnet; adapter selection and firewall access still required | Selected for the initial IPv4-only release |
+| mDNS/DNS-SD using python-zeroconf | Standard service discovery with service names, caching, and IPv4/IPv6 support | Adds a dependency and multicast/service lifecycle management; does not bypass network isolation or firewall policy | Revisit if interoperability or IPv6 becomes a requirement |
+
+This is a design comparison, not a measured mDNS performance comparison;
+zeroconf was not installed. References:
+[mDNS RFC 6762](https://www.rfc-editor.org/rfc/rfc6762),
+[python-zeroconf documentation](https://python-zeroconf.readthedocs.io/en/latest/),
+and [Windows Firewall rules](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/rules).
+
+#### Version 1 wire contract
+
+- UTF-8 JSON datagrams, maximum **1024 bytes** including all fields.
+- Query fields, all required: `protocol="audio-streamer-discovery"`, integer
+  `version=1`, `type="query"`, and `nonce` (32 lowercase hex characters from
+  a fresh random 128-bit value per scan).
+- Response fields, all required: the same protocol/version/nonce,
+  `type="receiver"`, `name` (1-64 characters; no control characters),
+  `address` (unicast IPv4), `app_version` (1-32 printable ASCII characters),
+  integer `audio_port=6005`, and `capabilities=["tcp-mpegts-mp3-v1"]`.
+- Validate every packet before displaying a result or replying. Reject invalid
+  encoding/JSON, oversized messages, wrong field sets/types, unknown protocol
+  versions, mismatched/stale nonces, and mismatched advertised/source IPs.
+  Responses must originate from the discovery port.
+- Recognized version-1 responses with unknown capabilities or another valid
+  audio port may be listed as incompatible; do not enable streaming to them.
+  Application version is informational, not a strict equality requirement.
+- Treat discovery as an unauthenticated hint, not proof of identity. The nonce
+  correlates responses but does not authenticate a Receiver. Never automatically
+  connect, change saved labels, or trust a peer-supplied path/command.
+
+#### Scan, adapter, and failure behavior
+
+- Send one query from each explicitly selected local IPv4/prefix to that
+  interface's directed broadcast address; use separate bound sockets.
+  Prototype selection is explicit so it never probes a VPN adapter by default.
+  Automatic adapter enumeration/profile filtering is an integration requirement.
+- Default scan window **2 seconds**, hard configurable maximum **5 seconds**;
+  check cancellation at intervals of at most 100 ms while waiting. No background
+  announcements or continuous scanning. Refresh starts a new scan and nonce;
+  packet loss may require Refresh rather than automatic retries.
+- Maximum 8 selected interfaces, 64 distinct results, and 256 received packets
+  per scan. Deduplicate by source IPv4/audio port; first valid response wins.
+  One physical Receiver on two interfaces may appear twice because v1 has no
+  persistent device identifier. Sort by display name/address.
+- Responder handles at most 32 datagrams per second globally, including malformed
+  traffic. It only replies to valid requests and never writes peer data into
+  settings. Prototype responder runs for at most 60 seconds via the CLI.
+- Empty results mean no valid replies in the scan window, not "firewall blocked"
+  or "no Receiver exists." Propagate socket/bind errors explicitly and release
+  owned sockets. Keep manual entry usable when discovery fails.
+- VPNs, client-isolated Wi-Fi, routed subnets, and blocked broadcasts may prevent
+  discovery even when manual TCP streaming works. IPv6 discovery is deferred;
+  it requires multicast rather than this IPv4 broadcast design.
+
+#### Windows privileges, firewall, and validation
+
+- Creating and using the UDP sockets worked with a non-elevated token on this
+  machine. Separate CLI processes exchanged a valid, compatible response on
+  loopback UDP 6006 with no audio listener. A directed broadcast on the active
+  Private Ethernet interface also found the same-host wildcard-bound responder.
+  Both processes exited cleanly. These prove local operation, not inbound
+  reachability from a second machine.
+- Windows Firewall was enabled for all three profiles; the only active physical
+  adapter was Ethernet on a Private network. No VPN or second physical adapter
+  was available. No firewall rules, adapter settings, or profiles were changed.
+- A standard user cannot be promised permission to add an inbound firewall
+  exception. For production, an administrator-managed **Private-profile,
+  local-subnet UDP 6006** Receiver exception may be needed. Permit the Receiver
+  executable, not ffmpeg.exe: discovery belongs to the app process. Domain policy
+  may prevent local exceptions. Do not silently elevate or enable Public access.
+- Verified with tests: packet bounds/validation, Unicode names, version and
+  capability compatibility, stale/spoofed-address rejection, deduplication,
+  bounded timeouts/results/packet counts, responder rate limiting, cancellation,
+  socket cleanup, and real loopback UDP discovery with no audio listener.
+- The full suite passes **141 tests**, including 16 discovery tests. A
+  multi-interface malformed/oversized-packet regression exposed a scan reading
+  258 packets instead of the promised 256; the receive limit now applies before
+  every read, including rejected packets.
+- Two simultaneous loopback addresses exercise multiple socket/interface paths;
+  directed-broadcast calculations and selected-interface binding are tested with
+  mocks. These are not substitutes for two physical network adapters.
+- Still requiring field tests before production discovery approval: two-machine
+  broadcast/unicast replies, concurrent Ethernet/Wi-Fi, connected/disconnected
+  VPN, Public/Domain profiles, explicit allow/block firewall rules, and managed
+  standard-user firewall policy. Record actual outcomes rather than treating an
+  empty scan as a diagnosis.
 
 ### Slice 3B: Receiver Discovery Responder
 
