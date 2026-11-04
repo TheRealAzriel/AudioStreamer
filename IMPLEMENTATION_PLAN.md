@@ -281,6 +281,20 @@ Help
   leave any existing root-level log untouched.
 - Include version, purpose, settings/recording/log paths, and FFmpeg/Icons8
   credits in About.
+- Field test (November 3, 2026): the user could not find a recording in the
+  selected `C:\Users\ccattell\Music\Audio Receiver Recordings` folder, although
+  the log shows FFmpeg launched with the full timestamped MP3 path in that
+  folder and then stopped. The log does not confirm the file's final location;
+  investigate output-file existence/location after stopping before considering
+  recording-folder behavior verified.
+- Receiver logs the selected recording target when recording starts and, when
+  FFmpeg exits, logs its exit code and whether the file exists and has data.
+- Follow-up test (November 4, 2026): the recording was verified at its logged
+  destination, and the user confirmed it plays correctly. The folder picker
+  hides files; use Open Recording Folder to inspect recordings. FFmpeg returned
+  a nonzero exit code despite a playable output; investigate the stop reason
+  and process diagnostics in Slice 2D rather than inferring failure from the
+  exit code alone.
 
 ### Slice 2C: Streamer Menu
 
@@ -308,8 +322,33 @@ Help
 - Preserve prominent Start and Stop controls.
 - Preserve manual IP entry and saved connections.
 - Keep menu actions and main-window controls synchronized.
+- Manage saved Receivers from the menu and allow settings reset with confirmation.
+- Keep discovery menu entries explicit about availability until Phase 3 implements
+  Receiver discovery.
 - Store Streamer logs in `%LOCALAPPDATA%\Audio Streamer\logs\Audio_Streamer.log`;
   leave any existing root-level log untouched.
+- Include version, purpose, settings/log paths, and third-party credits in About.
+
+### Slice 2D: Logging and Diagnostics for Both Apps
+
+**Branch:** `feature/logging-diagnostics`
+
+- Use Python's standard-library logging; preserve the existing per-app `logs`
+  folders and Open Log Folder actions.
+- Log application version and relevant settings/resource paths at startup.
+- Log connection attempts, confirmed streaming, disconnects, and shutdown.
+- Distinguish user-requested stops from unexpected process exits; record the
+  reason for stopping without treating every nonzero exit as the same failure.
+- Capture FFmpeg/FFplay error output and exit codes without blocking streaming,
+  filling unread pipes, or flooding the log with progress messages.
+- Include recording destination and output-file existence/size at completion.
+  A nonempty file alone does not establish that recording finalized correctly.
+- Preserve useful technical details while giving users clear error messages.
+  Do not log credentials or other secrets.
+- Test successful sessions, user stops, startup failures, unexpected disconnects,
+  and recording results in both apps; verify that logs explain what happened.
+- Keep discovery and the broader Receiver process-ownership refactor out of
+  scope; coordinate any tightly coupled stop-diagnostics changes with Slice 1B.
 
 ## Phase 3: Hybrid Receiver Discovery
 
@@ -431,6 +470,7 @@ Proceed only if the research spike proves it reliable and supportable.
 2A  Shared settings
 2B  Receiver menu and recording folder
 2C  Streamer menu
+2D  Logging and diagnostics for both apps
 
 3A  Discovery protocol spike
 3B  Receiver discovery responder

@@ -245,10 +245,15 @@ class StreamerSettingsIntegrationTests(unittest.TestCase):
         tree = ast.parse((ROOT / "Audio Streamer.py").read_text(encoding="utf-8-sig"))
         nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))]
         self.namespace = {
+            "APP_VERSION": APP_VERSION,
+            "tk": Mock(),
             "AppSettings": AppSettings, "SettingsError": SettingsError,
             "load_settings": Mock(return_value=AppSettings([("127.0.0.1", "Original")])),
             "save_settings": Mock(), "messagebox": Mock(), "logging": logging,
             "Path": Path, "history_file": Path("legacy.json"), "script_dir": Path("app"),
+            "log_file_path": Path("local-data") / "logs" / "Audio_Streamer.log",
+            "settings_path": Mock(return_value=Path("local-data") / "settings.json"),
+            "os": Mock(),
             "ip_history": [], "settings_available": False,
         }
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "<streamer settings>", "exec"), self.namespace)
@@ -340,6 +345,108 @@ class StreamerSettingsIntegrationTests(unittest.TestCase):
         self.namespace["messagebox"].showinfo.assert_not_called()
         self.assertEqual(self.namespace["ip_history"], [("127.0.0.1", "Original")])
 
+    def test_streamer_menu_contains_requested_actions(self):
+        menus = [Mock() for _ in range(5)]
+        self.namespace["tk"].Menu.side_effect = menus
+        app = Mock()
+        self.namespace["FFMPEGSenderGUI"].create_menu(app)
+        labels = [
+            call.kwargs.get("label")
+            for menu in menus
+            for call in menu.add_command.call_args_list + menu.add_cascade.call_args_list
+        ]
+        self.assertCountEqual(labels, [
+            "Exit", "File", "Discover Receivers...", "Refresh Discovered Receivers",
+            "Manage Saved Receivers", "Connections", "Reset Settings", "Options",
+            "Open Log Folder", "About Audio Streamer", "Help",
+        ])
+        app.root.config.assert_called_once_with(menu=menus[0])
+
+    def test_streamer_log_path_is_in_named_logs_folder(self):
+        tree = ast.parse((ROOT / "Audio Streamer.py").read_text(encoding="utf-8-sig"))
+        assignment = next(
+            node for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "log_file_path"
+                for target in node.targets
+            )
+        )
+        namespace = {"appdata_local_path": Path("local-data")}
+        exec(compile(ast.Module(body=[assignment], type_ignores=[]),
+                     "<streamer log path>", "exec"), namespace)
+        self.assertEqual(
+            namespace["log_file_path"],
+            Path("local-data") / "logs" / "Audio_Streamer.log",
+        )
+
+    def test_discovery_menu_actions_explain_discovery_is_not_available(self):
+        app = Mock()
+        app.discover_receivers = (
+            self.namespace["FFMPEGSenderGUI"].discover_receivers.__get__(app)
+        )
+        self.namespace["FFMPEGSenderGUI"].discover_receivers(app)
+        self.namespace["messagebox"].showinfo.assert_called_once()
+        self.assertIn("planned for a future update", self.namespace["messagebox"].showinfo.call_args.args[1])
+        self.namespace["messagebox"].reset_mock()
+        self.namespace["FFMPEGSenderGUI"].refresh_discovered_receivers(app)
+        self.namespace["messagebox"].showinfo.assert_called_once()
+
+    def test_remove_saved_receiver_persists_and_updates_visible_fields(self):
+        self.namespace["ip_history"] = [
+            ("127.0.0.1", "First"), ("127.0.0.2", "Second"),
+        ]
+        self.namespace["settings_available"] = True
+        app = Mock()
+        app.ip_entry.get.return_value = "127.0.0.1"
+        app.name_entry.get.return_value = "First"
+        self.assertTrue(
+            self.namespace["FFMPEGSenderGUI"].remove_saved_receiver(
+                app, "127.0.0.1", "First"
+            )
+        )
+        self.namespace["save_settings"].assert_called_once_with(
+            "Audio Streamer", AppSettings([("127.0.0.2", "Second")])
+        )
+        self.assertEqual(self.namespace["ip_history"], [("127.0.0.2", "Second")])
+        app.update_ip_dropdown.assert_called_once()
+        app.ip_entry.delete.assert_called_once_with(0, self.namespace["tk"].END)
+        app.name_entry.delete.assert_called_once_with(0, self.namespace["tk"].END)
+        app.ip_dropdown.set.assert_called_once_with("")
+
+    def test_reset_settings_clears_saved_connections_only_after_confirmation(self):
+        self.namespace["ip_history"] = [("127.0.0.1", "Saved")]
+        self.namespace["settings_available"] = True
+        self.namespace["messagebox"].askyesno.return_value = True
+        app = Mock()
+        self.namespace["FFMPEGSenderGUI"].reset_settings(app)
+        self.namespace["save_settings"].assert_called_once_with(
+            "Audio Streamer", AppSettings()
+        )
+        self.assertEqual(self.namespace["ip_history"], [])
+        app.update_ip_dropdown.assert_called_once()
+        self.namespace["messagebox"].showinfo.assert_called_once()
+
+    def test_reset_settings_cancellation_preserves_connections(self):
+        self.namespace["ip_history"] = [("127.0.0.1", "Saved")]
+        self.namespace["messagebox"].askyesno.return_value = False
+        self.namespace["FFMPEGSenderGUI"].reset_settings(Mock())
+        self.namespace["save_settings"].assert_not_called()
+        self.assertEqual(self.namespace["ip_history"], [("127.0.0.1", "Saved")])
+
+    def test_about_and_open_log_folder_show_the_streamer_details(self):
+        app = Mock()
+        self.namespace["FFMPEGSenderGUI"].show_about(app)
+        about = self.namespace["messagebox"].showinfo.call_args.args[1]
+        self.assertIn(APP_VERSION, about)
+        self.assertIn("local-data\\settings.json", about)
+        self.assertIn("local-data\\logs", about)
+
+        self.namespace["FFMPEGSenderGUI"].open_log_folder(app)
+        self.namespace["os"].startfile.assert_called_once_with(
+            str(Path("local-data") / "logs")
+        )
+
 
 class ReceiverSettingsIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -348,6 +455,7 @@ class ReceiverSettingsIntegrationTests(unittest.TestCase):
         names = {
             "create_menu", "start_recording", "save_preferences",
             "choose_recording_folder", "change_receiver_name", "reset_settings",
+            "log_recording_result",
         }
         methods = [
             node for node in gui.body
@@ -467,6 +575,44 @@ class ReceiverSettingsIntegrationTests(unittest.TestCase):
         self.namespace["messagebox"].showerror.assert_called_once()
         self.namespace["threading"].Thread.assert_not_called()
         self.assertFalse(app.is_recording_mode)
+
+    def test_recording_result_log_reports_created_file_and_size(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "recording.mp3"
+            output.write_bytes(b"mp3 data")
+            app = Mock()
+            app.recording_filename = output
+            logger = Mock()
+            with patch.dict(self.namespace, {"logging": logger}):
+                self.namespace["log_recording_result"](app, 0)
+            logger.info.assert_called_once_with(
+                "Recording saved: %s (%s bytes)", output, 8
+            )
+            logger.error.assert_not_called()
+
+    def test_recording_result_log_reports_missing_or_empty_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "recording.mp3"
+            app = Mock()
+            app.recording_filename = output
+            logger = Mock()
+            with patch.dict(self.namespace, {"logging": logger}):
+                self.namespace["log_recording_result"](app, 1)
+            logger.error.assert_called_once_with(
+                "Recording output was not created: %s (FFmpeg exit code: %s)",
+                output,
+                1,
+            )
+
+            output.touch()
+            logger.reset_mock()
+            with patch.dict(self.namespace, {"logging": logger}):
+                self.namespace["log_recording_result"](app, 0)
+            logger.error.assert_called_once_with(
+                "Recording output is empty: %s (FFmpeg exit code: %s)",
+                output,
+                0,
+            )
 
     def test_selected_recording_folder_is_checked_and_persisted(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -484,6 +484,7 @@ class FFplayGUI:
                 messagebox.showerror("Recording Error", str(exc))
                 return
             self.recording_filename = next_recording_path(self.recordings_dir, datetime.now())
+            logging.info("Recording target: %s", self.recording_filename)
             self.is_recording_mode = True
             self.stream_thread = threading.Thread(target=self.run_receiver, daemon=True)
             self.stream_thread.start()
@@ -623,7 +624,40 @@ class FFplayGUI:
             "Third-party credits: FFmpeg (ffmpeg.org); Icons8 (icons8.com).",
         )
 
+    def log_recording_result(self, exit_code):
+        try:
+            size = self.recording_filename.stat().st_size
+        except FileNotFoundError:
+            logging.error(
+                "Recording output was not created: %s (FFmpeg exit code: %s)",
+                self.recording_filename,
+                exit_code,
+            )
+        except OSError:
+            logging.exception("Unable to inspect recording output: %s", self.recording_filename)
+        else:
+            if size == 0:
+                logging.error(
+                    "Recording output is empty: %s (FFmpeg exit code: %s)",
+                    self.recording_filename,
+                    exit_code,
+                )
+            elif exit_code not in (0, None):
+                logging.error(
+                    "Recording output exists but FFmpeg exited with code %s: %s (%s bytes)",
+                    exit_code,
+                    self.recording_filename,
+                    size,
+                )
+            else:
+                logging.info(
+                    "Recording saved: %s (%s bytes)",
+                    self.recording_filename,
+                    size,
+                )
+
     def run_receiver(self):
+        ffmpeg_exit_code = None
         if self.is_recording_mode:
             logging.info("Starting ffmpeg TCP listener with recording on port 6005...")
         else:
@@ -712,7 +746,7 @@ class FFplayGUI:
                 
                 logging.info("ffmpeg TCP listener active on port 6005 with recording...")
                 # Wait for ffmpeg process (it will handle both outputs)
-                proc.wait()
+                ffmpeg_exit_code = proc.wait()
             else:
                 # Standard ffplay process for playback only
                 self.process = subprocess.Popen(
@@ -742,6 +776,8 @@ class FFplayGUI:
                         pass
                 self.audio_process = None
             
+            if self.is_recording_mode:
+                self.log_recording_result(ffmpeg_exit_code)
             self.process = None
             if self.root.winfo_exists():
                 self.root.after(0, self.update_button_states)

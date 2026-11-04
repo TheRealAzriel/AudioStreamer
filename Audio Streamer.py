@@ -13,7 +13,14 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from datetime import datetime
 from audio_common import app_data_directory, is_valid_ip, streamer_status
 from streamer_lifecycle import RECEIVER_DISCONNECTED, StreamerLifecycle
-from app_settings import APP_VERSION, AppSettings, SettingsError, load_settings, save_settings
+from app_settings import (
+    APP_VERSION,
+    AppSettings,
+    SettingsError,
+    load_settings,
+    save_settings,
+    settings_path,
+)
 
 # Use _MEIPASS to correctly set the path when bundled with PyInstaller
 if hasattr(sys, '_MEIPASS'):
@@ -28,8 +35,8 @@ else:
 script_dir = base_path
 appdata_local_path = app_data_directory('Audio Streamer')
 
-# Define log file path within AppData\Local
-log_file_path = appdata_local_path / 'Audio_Streamer.log'
+# Keep logs grouped separately from settings and other app data.
+log_file_path = appdata_local_path / 'logs' / 'Audio_Streamer.log'
 
 # Ensure the log file directory exists
 log_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,6 +232,8 @@ class FFMPEGSenderGUI:
         self.style_button(self.clear_history_button, normal_color="#f0f0f0", hover_color="#e0e0e0", text_color="#111111")
         self.clear_history_button.place(x=220, y=80)
 
+        self.create_menu()
+
         # Stream Controls Section
         controls_frame = tk.LabelFrame(root, text="Stream Control", font=("Arial", 10, "bold"))
         controls_frame.place(x=20, y=290, width=410, height=90)
@@ -355,6 +364,157 @@ class FFMPEGSenderGUI:
 
     def update_ip_dropdown(self):
         self.ip_dropdown['values'] = [f"{name}: {ip}" for ip, name in ip_history]
+
+    def create_menu(self):
+        menu_bar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menu_bar, tearoff=False)
+        file_menu.add_command(label="Exit", command=self.on_closing)
+        menu_bar.add_cascade(label="File", menu=file_menu)
+
+        connections_menu = tk.Menu(menu_bar, tearoff=False)
+        connections_menu.add_command(
+            label="Discover Receivers...", command=self.discover_receivers
+        )
+        connections_menu.add_command(
+            label="Refresh Discovered Receivers", command=self.refresh_discovered_receivers
+        )
+        connections_menu.add_separator()
+        connections_menu.add_command(
+            label="Manage Saved Receivers", command=self.manage_saved_receivers
+        )
+        menu_bar.add_cascade(label="Connections", menu=connections_menu)
+
+        options_menu = tk.Menu(menu_bar, tearoff=False)
+        options_menu.add_command(label="Reset Settings", command=self.reset_settings)
+        menu_bar.add_cascade(label="Options", menu=options_menu)
+
+        help_menu = tk.Menu(menu_bar, tearoff=False)
+        help_menu.add_command(label="Open Log Folder", command=self.open_log_folder)
+        help_menu.add_command(label="About Audio Streamer", command=self.show_about)
+        menu_bar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menu_bar)
+
+    def discover_receivers(self):
+        messagebox.showinfo(
+            "Discover Receivers",
+            "Automatic Receiver discovery is planned for a future update. "
+            "For now, enter the Receiver IP address manually.",
+            parent=self.root,
+        )
+
+    def refresh_discovered_receivers(self):
+        self.discover_receivers()
+
+    def manage_saved_receivers(self):
+        window = tk.Toplevel(self.root)
+        window.title("Manage Saved Receivers")
+        window.resizable(False, False)
+        window.transient(self.root)
+
+        receiver_list = tk.Listbox(window, width=48, height=10, exportselection=False)
+        receiver_list.pack(padx=12, pady=(12, 6), fill=tk.BOTH, expand=True)
+
+        def refresh_list():
+            receiver_list.delete(0, tk.END)
+            for ip, name in ip_history:
+                receiver_list.insert(tk.END, f"{name}: {ip}")
+
+        def use_selected():
+            selection = receiver_list.curselection()
+            if not selection:
+                messagebox.showwarning(
+                    "No Selection", "Select a saved Receiver first.", parent=window
+                )
+                return
+            name, ip = receiver_list.get(selection[0]).rsplit(": ", 1)
+            self.ip_entry.delete(0, tk.END)
+            self.ip_entry.insert(0, ip)
+            self.name_entry.delete(0, tk.END)
+            self.name_entry.insert(0, name)
+            self.ip_dropdown.set(f"{name}: {ip}")
+            window.destroy()
+
+        def remove_selected():
+            selection = receiver_list.curselection()
+            if not selection:
+                messagebox.showwarning(
+                    "No Selection", "Select a saved Receiver first.", parent=window
+                )
+                return
+            name, ip = receiver_list.get(selection[0]).rsplit(": ", 1)
+            if not messagebox.askyesno(
+                "Delete Receiver", f"Remove the saved Receiver '{name}: {ip}'?",
+                parent=window,
+            ):
+                return
+            if self.remove_saved_receiver(ip, name):
+                refresh_list()
+
+        buttons = tk.Frame(window)
+        buttons.pack(padx=12, pady=(6, 12), fill=tk.X)
+        tk.Button(buttons, text="Use", command=use_selected).pack(side=tk.LEFT)
+        tk.Button(buttons, text="Remove", command=remove_selected).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        tk.Button(buttons, text="Close", command=window.destroy).pack(side=tk.RIGHT)
+        receiver_list.bind("<Double-Button-1>", lambda event: use_selected())
+        refresh_list()
+        window.grab_set()
+
+    def remove_saved_receiver(self, ip, name):
+        receivers = list(ip_history)
+        try:
+            receivers.remove((ip, name))
+        except ValueError:
+            return False
+        if not save_ip_history(receivers):
+            return False
+        self.update_ip_dropdown()
+        if self.ip_entry.get() == ip and self.name_entry.get() == name:
+            self.ip_entry.delete(0, tk.END)
+            self.name_entry.delete(0, tk.END)
+            self.ip_dropdown.set("")
+        return True
+
+    def reset_settings(self):
+        if not messagebox.askyesno(
+            "Reset Settings",
+            "Remove all saved Receivers and reset Audio Streamer settings?",
+            parent=self.root,
+        ):
+            return
+        if not delete_ip_history():
+            return
+        self.update_ip_dropdown()
+        self.ip_entry.delete(0, tk.END)
+        self.name_entry.delete(0, tk.END)
+        self.ip_dropdown.set("")
+        messagebox.showinfo("Reset Settings", "Audio Streamer settings have been reset.")
+
+    def open_log_folder(self):
+        try:
+            os.startfile(str(log_file_path.parent))
+        except OSError as exc:
+            logging.exception("Unable to open log folder")
+            messagebox.showerror(
+                "Open Folder Error", f"Unable to open {log_file_path.parent}: {exc}",
+                parent=self.root,
+            )
+
+    def show_about(self):
+        messagebox.showinfo(
+            "About Audio Streamer",
+            f"Audio Streamer {APP_VERSION}\n"
+            "Streams audio from this computer to an Audio Receiver over the local network.\n\n"
+            f"Settings file: {settings_path('Audio Streamer')}\n"
+            f"Log folder: {log_file_path.parent}\n\n"
+            "Third-party credits: FFmpeg (ffmpeg.org); VB-CABLE (V.Burel); "
+            "Icons8 (icons8.com).\n"
+            "Designed to be used alongside Mouse Without Borders by PowerToyz.",
+            parent=self.root,
+        )
 
     def on_ip_selected(self, event):
         selected_text = self.ip_dropdown.get()
